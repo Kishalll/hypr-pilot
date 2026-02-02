@@ -1,0 +1,114 @@
+.
+├── dataset3.txt
+├── docs
+│   └── usage
+│       ├── game-mode.md
+│       ├── keybindings.md
+│       ├── launch.md
+│       └── screenshots.md
+└── dotfiles
+    └── config
+        ├── hypr
+        │   ├── colors.conf
+        │   ├── conf
+        │   │   ├── animation.conf
+        │   │   ├── animations
+        │   │   │   ├── animations-classic.conf
+        │   │   │   ├── animations-dynamic.conf
+        │   │   │   ├── animations-end4.conf
+        │   │   │   ├── animations-fast.conf
+        │   │   │   ├── animations-high.conf
+        │   │   │   ├── animations-moving.conf
+        │   │   │   ├── animations-smooth.conf
+        │   │   │   ├── default.conf
+        │   │   │   ├── disabled.conf
+        │   │   │   └── standard.conf
+        │   │   ├── autostart.conf
+        │   │   ├── cursor.conf
+        │   │   ├── custom.conf
+        │   │   ├── decoration.conf
+        │   │   ├── decorations
+        │   │   │   ├── blur.conf
+        │   │   │   ├── default.conf
+        │   │   │   ├── gamemode.conf
+        │   │   │   ├── no-blur.conf
+        │   │   │   ├── no-rounding.conf
+        │   │   │   ├── no-rounding-more-blur.conf
+        │   │   │   ├── rounding-all-blur.conf
+        │   │   │   ├── rounding-all-blur-no-shadows.conf
+        │   │   │   ├── rounding.conf
+        │   │   │   └── rounding-more-blur.conf
+        │   │   ├── environment.conf
+        │   │   ├── environments
+        │   │   │   ├── default.conf
+        │   │   │   ├── kvm.conf
+        │   │   │   └── nvidia.conf
+        │   │   ├── keybinding.conf
+        │   │   ├── keybindings
+        │   │   │   ├── default.conf
+        │   │   │   └── fr.conf
+        │   │   ├── keyboard.conf
+        │   │   ├── layout.conf
+        │   │   ├── layouts
+        │   │   │   ├── default.conf
+        │   │   │   └── laptop.conf
+        │   │   ├── misc.conf
+        │   │   ├── monitor.conf
+        │   │   ├── monitors
+        │   │   │   ├── 1366x768.conf
+        │   │   │   ├── 1440x1080.conf
+        │   │   │   ├── 1600x900.conf
+        │   │   │   ├── 1920x1080.conf
+        │   │   │   ├── 1920x1200.conf
+        │   │   │   ├── 2560x1440@120.conf
+        │   │   │   ├── 2560x1440@120x125.conf
+        │   │   │   ├── 2560x1440.conf
+        │   │   │   ├── 3440x1440.conf
+        │   │   │   ├── default.conf
+        │   │   │   ├── highres.conf
+        │   │   │   └── nwg-displays.conf
+        │   │   ├── window.conf
+        │   │   ├── windowrule.conf
+        │   │   ├── windowrules
+        │   │   │   ├── default52.conf
+        │   │   │   └── default.conf
+        │   │   ├── windows
+        │   │   │   ├── border-1.conf
+        │   │   │   ├── border-1-reverse.conf
+        │   │   │   ├── border-2.conf
+        │   │   │   ├── border-2-reverse.conf
+        │   │   │   ├── border-3.conf
+        │   │   │   ├── border-3-reverse.conf
+        │   │   │   ├── border-4.conf
+        │   │   │   ├── border-4-reverse.conf
+        │   │   │   ├── default.conf
+        │   │   │   ├── gamemode.conf
+        │   │   │   ├── glass.conf
+        │   │   │   ├── no-border.conf
+        │   │   │   ├── no-border-more-gaps.conf
+        │   │   │   └── transparent.conf
+        │   │   ├── workspace.conf
+        │   │   └── workspaces
+        │   │       └── default.conf
+        │   ├── hypridle.conf
+        │   ├── hyprland.conf
+        │   ├── hyprlock.conf
+        │   ├── hyprpaper.conf
+        │   ├── monitors.conf
+        │   ├── scripts
+        │   │   ├── gamemode.sh
+        │   │   ├── hypridle.sh
+        │   │   ├── launcher.sh
+        │   │   ├── load-gamemode.sh
+        │   │   ├── moveTo.sh
+        │   │   ├── restart-hypridle.sh
+        │   │   ├── screenshot.sh
+        │   │   ├── toggleallfloat.sh
+        │   │   └── toggle-animations.sh
+        │   └── workspaces.conf
+        └── matugen
+            ├── config.toml
+            └── templates
+                └── hyprland-colors.conf
+
+19 directories, 93 files
