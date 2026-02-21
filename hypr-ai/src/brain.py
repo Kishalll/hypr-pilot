@@ -1,6 +1,6 @@
 import json
 import requests
-from config import OLLAMA_URL, LLM_MODEL, SYSTEM_PROMPT, WHITELIST_KEYWORDS
+from config import OLLAMA_URL, LLM_MODEL, SYSTEM_PROMPT
 from vectorstore import HyprVectorStore
 
 class HyprBrain:
@@ -8,16 +8,7 @@ class HyprBrain:
         self.store = HyprVectorStore()
         self.store.load_index()
 
-    def is_domain_query(self, query):
-        """Check if the query is within Hyprland domain."""
-        query_lower = query.lower()
-        return any(keyword in query_lower for keyword in WHITELIST_KEYWORDS)
-
     def generate_response(self, query):
-        if not self.is_domain_query(query):
-            yield "I am specialized only in Hyprland configuration. Please ask a Hyprland-related question."
-            return
-
         # Retrieve relevant context
         context_chunks = self.store.search(query, k=5)
         
