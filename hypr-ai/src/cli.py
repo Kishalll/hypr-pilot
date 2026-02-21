@@ -3,7 +3,7 @@ import time
 from brain import HyprBrain
 
 def main():
-    print("Welcome to Hypr-AI - Local Hyprland Specialist")
+    print("Welcome to Hypr-Pilot - Local Hyprland Specialist")
     print("Type 'exit' to quit.")
     print("-" * 50)
     

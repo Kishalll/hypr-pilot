@@ -1,7 +1,28 @@
+import os
 import json
 import faiss
 import numpy as np
+import logging
+
+# Suppress noisy model loading reports and library logs
+os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
+os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
+
+# Silencing logging from libraries
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+
 from sentence_transformers import SentenceTransformer
+from transformers import logging as transformers_logging
+transformers_logging.set_verbosity_error()
+
+# Global disable for tqdm (to hide "Loading weights")
+from tqdm import tqdm
+from functools import partialmethod
+tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
+
 from config import EMBED_MODEL, INDEX_PATH, METADATA_PATH
 
 class HyprVectorStore:
