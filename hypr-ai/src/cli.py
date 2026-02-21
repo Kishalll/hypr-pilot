@@ -33,7 +33,7 @@ def main():
         if not query.strip():
             continue
 
-        print("\nHypr-AI: ", end="", flush=True)
+        print("\nHypr-Pilot > ", end="", flush=True)
         
         # Stream the response
         for token in brain.generate_response(query):
