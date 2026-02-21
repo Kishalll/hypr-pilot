@@ -1,25 +1,45 @@
 import json
 import requests
-from config import OLLAMA_URL, LLM_MODEL, SYSTEM_PROMPT
+from config import OLLAMA_URL, LLM_MODEL, SYSTEM_PROMPT, DOMAIN_KEYWORDS
 from vectorstore import HyprVectorStore
 
 class HyprBrain:
     def __init__(self):
         self.store = HyprVectorStore()
-        self.store.load_index()
+        # Initialize index lazily or load it
+        try:
+            self.store.load_index()
+        except:
+            print("Warning: Index not loaded. Context unavailable.")
+
+    def needs_context(self, query):
+        """Check if the query is likely about Hyprland to fetch context."""
+        query_lower = query.lower()
+        # Check if any domain keyword is present as a word or substring
+        # Using a simple check for speed
+        for keyword in DOMAIN_KEYWORDS:
+            if keyword in query_lower:
+                return True
+        return False
 
     def generate_response(self, query):
-        # Retrieve relevant context
-        context_chunks = self.store.search(query, k=5)
+        full_prompt = ""
         
-        # Build context string with priority info
-        context_str = ""
-        for i, chunk in enumerate(context_chunks):
-            source_info = f"Source: {chunk['source']} (Priority {chunk['priority']})"
-            context_str += f"\n--- Context Block {i+1} ({source_info}) ---\n{chunk['content']}\n"
-
-        # Create full prompt
-        full_prompt = f"{SYSTEM_PROMPT}\n\nCONTEXT FROM DATASETS:\n{context_str}\n\nUSER QUERY: {query}\n\nASSISTANT RESPONSE:"
+        # Optimization: Only search vector store if query is relevant to Hyprland
+        if self.needs_context(query):
+            # Retrieve relevant context
+            context_chunks = self.store.search(query, k=3) # Reduced k for speed
+            
+            # Build context string with priority info
+            context_str = ""
+            for i, chunk in enumerate(context_chunks):
+                source_info = f"Source: {chunk['source']} (Priority {chunk['priority']})"
+                context_str += f"\n--- Context Block {i+1} ({source_info}) ---\n{chunk['content']}\n"
+            
+            full_prompt = f"{SYSTEM_PROMPT}\n\nCONTEXT FROM DATASETS:\n{context_str}\n\nUSER QUERY: {query}\n\nASSISTANT RESPONSE:"
+        else:
+            # Skip context search for general questions (faster)
+            full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}\n\nASSISTANT RESPONSE:"
 
         # Call Ollama
         payload = {
