@@ -1,6 +1,6 @@
 import json
 import requests
-from config import OLLAMA_URL, LLM_MODEL, SYSTEM_PROMPT, DOMAIN_KEYWORDS
+from config import OLLAMA_URL, LLM_MODEL, SYSTEM_PROMPT, CHAT_SYSTEM_PROMPT, DOMAIN_KEYWORDS
 from vectorstore import HyprVectorStore
 
 class HyprBrain:
@@ -23,23 +23,24 @@ class HyprBrain:
         return False
 
     def generate_response(self, query):
-        full_prompt = ""
-        
-        # Optimization: Only search vector store if query is relevant to Hyprland
+        system_prompt = SYSTEM_PROMPT
+        context_str = ""
+
+        # Optimization: Only search vector store if query is relevant
         if self.needs_context(query):
             # Retrieve relevant context
-            context_chunks = self.store.search(query, k=3) # Reduced k for speed
+            context_chunks = self.store.search(query, k=3)
             
-            # Build context string with priority info
-            context_str = ""
+            # Build context string
             for i, chunk in enumerate(context_chunks):
                 source_info = f"Source: {chunk['source']} (Priority {chunk['priority']})"
                 context_str += f"\n--- Context Block {i+1} ({source_info}) ---\n{chunk['content']}\n"
             
-            full_prompt = f"{SYSTEM_PROMPT}\n\nCONTEXT FROM DATASETS:\n{context_str}\n\nUSER QUERY: {query}\n\nASSISTANT RESPONSE:"
+            full_prompt = f"{system_prompt}\n\nCONTEXT FROM DATASETS:\n{context_str}\n\nUSER QUERY: {query}\n\nASSISTANT RESPONSE:"
         else:
-            # Skip context search for general questions (faster)
-            full_prompt = f"{SYSTEM_PROMPT}\n\nUSER QUERY: {query}\n\nASSISTANT RESPONSE:"
+            # Use the lightweight prompt for general chat
+            system_prompt = CHAT_SYSTEM_PROMPT
+            full_prompt = f"{system_prompt}\n\nUSER QUERY: {query}\n\nASSISTANT RESPONSE:"
 
         # Call Ollama
         payload = {
