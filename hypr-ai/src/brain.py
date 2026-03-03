@@ -6,6 +6,7 @@ from vectorstore import HyprVectorStore
 class HyprBrain:
     def __init__(self):
         self.store = HyprVectorStore()
+        self.history = [] # Chat history buffer
         # Initialize index lazily or load it
         try:
             self.store.load_index()
@@ -15,57 +16,74 @@ class HyprBrain:
     def needs_context(self, query):
         """Check if the query is likely about Hyprland to fetch context."""
         query_lower = query.lower()
-        # Check if any domain keyword is present as a word or substring
-        # Using a simple check for speed
+        
+        # Check if any domain keyword is present
         for keyword in DOMAIN_KEYWORDS:
             if keyword in query_lower:
                 return True
+        
+        # Heuristic: If last message was a Hyprland query and this is a short follow-up
+        if self.history and len(query.split()) < 10:
+            last_msg = self.history[-1]["content"].lower()
+            if any(k in last_msg for k in DOMAIN_KEYWORDS):
+                return True
+                
         return False
 
     def generate_response(self, query):
         system_prompt = SYSTEM_PROMPT
         context_str = ""
 
-        # Optimization: Only search vector store if query is relevant
+        # Retrieve context if needed
         if self.needs_context(query):
-            # Retrieve relevant context
             context_chunks = self.store.search(query, k=3)
-            
-            # Build context string
             for i, chunk in enumerate(context_chunks):
-                source_info = f"Source: {chunk['source']} (Priority {chunk['priority']})"
+                source_info = f"Source: {chunk['source']}"
                 context_str += f"\n--- Context Block {i+1} ({source_info}) ---\n{chunk['content']}\n"
             
-            full_prompt = f"{system_prompt}\n\nCONTEXT FROM DATASETS:\n{context_str}\n\nUSER QUERY: {query}\n\nASSISTANT RESPONSE:"
+            # Augment the system prompt with context
+            system_prompt = f"{SYSTEM_PROMPT}\n\nRELEVANT CONTEXT:\n{context_str}"
         else:
-            # Use the lightweight prompt for general chat
             system_prompt = CHAT_SYSTEM_PROMPT
-            full_prompt = f"{system_prompt}\n\nUSER QUERY: {query}\n\nASSISTANT RESPONSE:"
 
-        # Call Ollama
+        # Prepare messages for Chat API
+        messages = [{"role": "system", "content": system_prompt}]
+        # Add history (limit to last 10 messages to keep context window clean)
+        messages.extend(self.history[-10:])
+        # Add current user query
+        messages.append({"role": "user", "content": query})
+
+        # Call Ollama Chat API
         payload = {
             "model": LLM_MODEL,
-            "prompt": full_prompt,
+            "messages": messages,
             "stream": True,
-            "keep_alive": -1, # Keep in RAM during session
+            "keep_alive": -1,
             "options": {
-                "temperature": 0.2,
+                "temperature": 0.3,
                 "num_ctx": 4096
             }
         }
 
+        full_response = ""
         try:
-            # Use stream=True to get chunks
             response = requests.post(OLLAMA_URL, json=payload, timeout=120, stream=True)
             response.raise_for_status()
             for line in response.iter_lines():
                 if line:
                     chunk = json.loads(line.decode('utf-8'))
-                    token = chunk.get("response", "")
+                    message = chunk.get("message", {})
+                    token = message.get("content", "")
                     if token:
+                        full_response += token
                         yield token
                     if chunk.get("done", False):
                         break
+            
+            # Save to history after successful generation
+            self.history.append({"role": "user", "content": query})
+            self.history.append({"role": "assistant", "content": full_response})
+            
         except Exception as e:
             yield f"\nError communicating with local LLM: {e}"
 
