@@ -2,6 +2,35 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_window_class",
+            "description": "Finds the accurate window class name for an application (like 'org.pulseaudio.pavucontrol' for 'pavucontrol'). Always use this BEFORE adding a window rule.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "app_name": {
+                        "type": "string",
+                        "description": "The common name of the app (e.g. 'pavucontrol', 'firefox')."
+                    }
+                },
+                "required": ["app_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_active_config_paths",
+            "description": "Returns the paths of the main hyprland.conf and any sourced configuration files where window rules should be stored. Use this instead of guessing file paths.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_directory",
             "description": "Lists files and folders in a specified directory path. Useful for exploring the filesystem.",
             "parameters": {
@@ -47,6 +76,27 @@ TOOLS = [
                     "content": {
                         "type": "string",
                         "description": "The full content to write to the file."
+                    }
+                },
+                "required": ["file_path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "append_file",
+            "description": "Appends new content to the end of an existing file. Use this for adding new rules or lines without replacing the whole file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The path to the file to append to."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The specific content to append."
                     }
                 },
                 "required": ["file_path", "content"]

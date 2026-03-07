@@ -53,12 +53,18 @@ class HyprVectorStore:
         print(f"Index saved to {INDEX_PATH}")
 
     def load_index(self):
-        self.index = faiss.read_index(INDEX_PATH)
-        self.load_metadata()
+        try:
+            self.index = faiss.read_index(INDEX_PATH)
+            self.load_metadata()
+            return True
+        except Exception as e:
+            print(f"Warning: Could not load index from {INDEX_PATH}: {e}")
+            return False
 
     def search(self, query, k=5):
         if self.index is None:
-            self.load_index()
+            if not self.load_index():
+                return [] # Return empty if index literally doesn't exist
         
         query_vector = self.model.encode([query]).astype('float32')
         distances, indices = self.index.search(query_vector, k)
