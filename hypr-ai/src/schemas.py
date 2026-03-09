@@ -106,6 +106,31 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "replace_line",
+            "description": "Replaces a specific existing line in a file with a new line. Use this to fix broken or incorrect rules instead of appending duplicates. You must provide the exact old line content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The path to the file."
+                    },
+                    "old_line": {
+                        "type": "string",
+                        "description": "The exact existing line to find and replace."
+                    },
+                    "new_line": {
+                        "type": "string",
+                        "description": "The corrected replacement line."
+                    }
+                },
+                "required": ["file_path", "old_line", "new_line"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "execute_command",
             "description": "Runs a shell command and returns its output. Useful for system operations like 'hyprctl reload'.",
             "parameters": {

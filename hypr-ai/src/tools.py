@@ -21,8 +21,8 @@ def read_file(file_path):
         expanded_path = expand_path(file_path)
         with open(expanded_path, 'r', encoding='utf-8') as f:
             content = f.read()
-            if len(content) > 3000:
-                return content[:3000] + "\n\n...[FILE TRUNCATED FOR CONTEXT SIZE]..."
+            if len(content) > 8000:
+                return content[:8000] + "\n\n...[FILE TRUNCATED FOR CONTEXT SIZE]..."
             return content
     except Exception as e:
         return f"Error reading file: {e}"
@@ -96,7 +96,7 @@ def get_window_class(app_name):
         return f"Error finding class: {e}"
 
 def get_active_config_paths():
-    """Reads hyprland.conf to find where rules are sourced."""
+    """Reads hyprland.conf to find where rules are sourced, and identifies the rules file."""
     try:
         base_dir = expand_path("~/.config/hypr")
         path = os.path.join(base_dir, "hyprland.conf")
@@ -104,24 +104,70 @@ def get_active_config_paths():
             return "Error: ~/.config/hypr/hyprland.conf does not exist."
         with open(path, 'r', encoding='utf-8') as f:
             content = f.read()
-        
-        sources = re.findall(r'^\\s*source\\s*=\\s*(.+)', content, re.MULTILINE)
-        res = f"Main Config: {path}\\n"
-        if sources:
-            res += "Sourced Files (WINDOW RULES usually go here!):\\n"
-            for s in sources:
-                # Resolve relative paths that don't start with / or ~
-                s = s.strip()
-                if s.startswith('~'):
-                    s = expand_path(s)
-                elif not s.startswith('/'):
-                    s = os.path.join(base_dir, s)
-                res += f"- {s}\\n"
+
+        sources = re.findall(r'^\s*source\s*=\s*(.+)', content, re.MULTILINE)
+        resolved = []
+        rules_file = None
+        for s in sources:
+            s = s.strip()
+            if s.startswith('~'):
+                s = expand_path(s)
+            elif not s.startswith('/'):
+                s = os.path.join(base_dir, s)
+            resolved.append(s)
+            # Identify the rules file (prefer custom/rules over hyprland/rules)
+            if 'rules' in os.path.basename(s).lower():
+                if rules_file is None or 'custom' in s.lower():
+                    rules_file = s
+
+        res = f"Main Config: {path}\n"
+        if resolved:
+            res += "Sourced Files:\n"
+            for s in resolved:
+                exists = os.path.exists(s)
+                marker = "" if exists else " [MISSING]"
+                res += f"  - {s}{marker}\n"
         else:
-            res += "No sourced files found. Rules must go directly in hyprland.conf."
+            res += "No sourced files found.\n"
+
+        if rules_file and os.path.exists(rules_file):
+            res += f"\n>>> RULES FILE (use this for window rules): {rules_file}\n"
+        elif rules_file:
+            res += f"\n>>> Rules file referenced but MISSING: {rules_file}\n"
+            res += f">>> Fallback: append rules directly to {path}\n"
+        else:
+            res += f"\n>>> No dedicated rules file found. Append rules directly to {path}\n"
+
         return res
     except Exception as e:
         return f"Error reading config: {e}"
+
+def replace_line(file_path, old_line, new_line):
+    """Replaces a specific line in a file. Use this to fix existing broken rules instead of appending duplicates."""
+    try:
+        expanded_path = expand_path(file_path)
+        if not os.path.exists(expanded_path):
+            return f"Error: File {file_path} does not exist."
+
+        with open(expanded_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        old_stripped = old_line.strip()
+        found = False
+        for i, line in enumerate(lines):
+            if line.strip() == old_stripped:
+                lines[i] = new_line.rstrip('\n') + '\n'
+                found = True
+                break
+
+        if not found:
+            return f"Error: Could not find the line to replace. Looked for: {old_line}"
+
+        with open(expanded_path, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+        return f"Successfully replaced line in {file_path}"
+    except Exception as e:
+        return f"Error replacing line: {e}"
 
 def execute_command(command):
     """Runs a shell command and returns the output."""

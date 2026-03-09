@@ -29,8 +29,8 @@ class HyprBrain:
         # Display the clean tool action box
         ui.tool_action(name, args)
 
-        # For write/append, intercept hallucinated paths before confirming
-        if name in ("write_file", "append_file"):
+        # For write/append/replace, intercept hallucinated paths before confirming
+        if name in ("write_file", "append_file", "replace_line"):
             target_path = tools.expand_path(args.get('file_path'))
             if not os.path.exists(target_path):
                 ui.tool_result_error(f"Path does not exist: {target_path}")
@@ -40,8 +40,22 @@ class HyprBrain:
                 suggestions = "\n".join(conf_files) if conf_files else "No .conf files found in ~/.config/hypr"
                 return f"Action denied: The file '{target_path}' does not exist.\n\nActual config files in ~/.config/hypr:\n{suggestions}\n\nPlease check `~/.config/hypr/hyprland.conf` to see which are `source`d for windowrules."
 
+        # For replace_line, verify the old line actually exists before showing confirmation
+        if name == "replace_line":
+            target_path = tools.expand_path(args.get('file_path'))
+            old_line = args.get('old_line', '').strip()
+            try:
+                with open(target_path, 'r', encoding='utf-8') as f:
+                    file_lines = [l.strip() for l in f.readlines()]
+                if old_line not in file_lines:
+                    ui.tool_result_error(f"Line not found in file: {old_line}")
+                    return f"Error: The line '{old_line}' does NOT exist in {args.get('file_path')}. You may have hallucinated it from RAG context. Please re-read the file and check what lines actually exist, then decide whether to use replace_line or append_file."
+            except Exception as e:
+                ui.tool_result_error(str(e))
+                return f"Error reading file: {e}"
+
         # Confirm destructive actions
-        if name in ("write_file", "append_file", "execute_command"):
+        if name in ("write_file", "append_file", "replace_line", "execute_command"):
             choice = ui.confirm_action(name, args)
             if choice == 'a':
                 ui.tool_result_aborted()

@@ -112,6 +112,7 @@ TOOL_LABELS = {
     "read_file":            ("📄", "Reading file"),
     "write_file":           ("✏️ ", "Writing file"),
     "append_file":          ("📝", "Appending to file"),
+    "replace_line":         ("🔄", "Replacing line in file"),
     "execute_command":      ("⚡", "Running command"),
 }
 
@@ -139,7 +140,7 @@ def tool_action(name, args, step=None):
         detail = f"path = {C.BRIGHT_YELLOW}{args.get('dir_path', '.')}{C.RESET}"
     elif name == "read_file":
         detail = f"path = {C.BRIGHT_YELLOW}{args.get('file_path', '?')}{C.RESET}"
-    elif name in ("write_file", "append_file"):
+    elif name in ("write_file", "append_file", "replace_line"):
         detail = f"path = {C.BRIGHT_YELLOW}{args.get('file_path', '?')}{C.RESET}"
     elif name == "execute_command":
         cmd = args.get('command', '?')
@@ -177,6 +178,17 @@ def confirm_action(name, args):
             print(f"  {C.BRIGHT_BLACK}  │{C.RESET} {C.GREEN}{display_line}{C.RESET}")
         if len(lines) > 10:
             print(f"  {C.BRIGHT_BLACK}  │{C.RESET} {C.DIM}... ({len(lines) - 10} more lines){C.RESET}")
+        print(f"  {C.BRIGHT_BLACK}  └{'─' * (w - 6)}┘{C.RESET}")
+
+    elif name == "replace_line":
+        path = args.get("file_path", "?")
+        old_line = args.get("old_line", "?")
+        new_line = args.get("new_line", "?")
+
+        print(f"\n  {C.YELLOW}{C.BOLD}  ⚠  Replace in: {path}{C.RESET}")
+        print(f"  {C.BRIGHT_BLACK}  ┌{'─' * (w - 6)}┐{C.RESET}")
+        print(f"  {C.BRIGHT_BLACK}  │{C.RESET} {C.RED}- {old_line.strip()[:w - 10]}{C.RESET}")
+        print(f"  {C.BRIGHT_BLACK}  │{C.RESET} {C.GREEN}+ {new_line.strip()[:w - 10]}{C.RESET}")
         print(f"  {C.BRIGHT_BLACK}  └{'─' * (w - 6)}┘{C.RESET}")
 
     elif name == "execute_command":
