@@ -7,6 +7,7 @@ from config import OLLAMA_URL, LLM_MODEL, AGENT_SYSTEM_PROMPT, CHAT_SYSTEM_PROMP
 from vectorstore import HyprVectorStore
 from schemas import TOOLS
 import tools
+import ui
 
 class HyprBrain:
     def __init__(self):
@@ -25,51 +26,54 @@ class HyprBrain:
         return False
 
     def call_local_tool(self, name, args):
-        print(f"\n🤖 [AGENT THOUGHT] -> Executing: {name}")
-        
-        if name == "read_file":
-            print(f"   Reading file: {args.get('file_path')}")
-        elif name == "list_directory":
-            print(f"   Listing directory: {args.get('dir_path', '.')}")
-        elif name in ["write_file", "append_file", "execute_command"]:
-            if name in ["write_file", "append_file"]:
-                # Intercept hallucinated paths
-                target_path = tools.expand_path(args.get('file_path'))
-                if not os.path.exists(target_path):
-                    print(f"   ❌ REJECTED: The file path '{target_path}' does NOT exist. You hallucinated it.")
-                    
-                    # Search for actual conf files to suggest
-                    import glob
-                    base_hypr = tools.expand_path("~/.config/hypr")
-                    conf_files = glob.glob(f"{base_hypr}/**/*.conf", recursive=True)
-                    suggestions = "\n".join(conf_files) if conf_files else "No .conf files found in ~/.config/hypr"
-                    
-                    return f"Action denied: The file '{target_path}' does not exist.\n\nHere are the actual configuration files available in ~/.config/hypr:\n{suggestions}\n\nPlease check `~/.config/hypr/hyprland.conf` to see which of these are `source`d for windowrules."
+        # Display the clean tool action box
+        ui.tool_action(name, args)
 
-            if name == "execute_command":
-                print(f"   Running command: `{args.get('command')}`")
-            elif name == "write_file":
-                print(f"   ⚠️ WARNING: OVERWRITING file: {args.get('file_path')}")
-                print(f"   --- Content to write ---\n{args.get('content')}\n   ------------------------")
-            elif name == "append_file":
-                print(f"   Appending to file: {args.get('file_path')}")
-                print(f"   --- Content to append ---\n{args.get('content')}\n   -------------------------")
-                
-            confirm = input("   Confirm execution? (y/n/a): ").strip().lower()
-            if confirm == 'a':
-                print("   Action aborted by user.")
+        # For write/append, intercept hallucinated paths before confirming
+        if name in ("write_file", "append_file"):
+            target_path = tools.expand_path(args.get('file_path'))
+            if not os.path.exists(target_path):
+                ui.tool_result_error(f"Path does not exist: {target_path}")
+                import glob
+                base_hypr = tools.expand_path("~/.config/hypr")
+                conf_files = glob.glob(f"{base_hypr}/**/*.conf", recursive=True)
+                suggestions = "\n".join(conf_files) if conf_files else "No .conf files found in ~/.config/hypr"
+                return f"Action denied: The file '{target_path}' does not exist.\n\nActual config files in ~/.config/hypr:\n{suggestions}\n\nPlease check `~/.config/hypr/hyprland.conf` to see which are `source`d for windowrules."
+
+        # Confirm destructive actions
+        if name in ("write_file", "append_file", "execute_command"):
+            choice = ui.confirm_action(name, args)
+            if choice == 'a':
+                ui.tool_result_aborted()
                 return "ABORT_QUERY"
-            elif confirm != 'y':
-                print("   Action denied via user override.")
+            elif choice != 'y':
+                ui.tool_result_denied("Skipped by user.")
                 return "User denied execution."
 
+        # Execute the tool
         func = getattr(tools, name, None)
         if func:
             try:
-                return func(**args)
+                result = func(**args)
+                ui.tool_result_success()
+                return result
             except Exception as e:
+                ui.tool_result_error(str(e))
                 return f"Error: {e}"
+        ui.tool_result_error(f"Tool '{name}' not found.")
         return f"Error: Tool '{name}' not found."
+
+    def _try_parse_json(self, json_str):
+        r"""Parse JSON with fallback for invalid escape sequences (e.g. \. in regex)."""
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            # Fix invalid escapes: \. \( \) \^ \$ etc. that LLMs put in regex patterns
+            fixed = re.sub(r'\\(?!["\\\\bfnrtu/])', r'\\\\', json_str)
+            try:
+                return json.loads(fixed)
+            except json.JSONDecodeError:
+                return None
 
     def parse_tool_calls_from_text(self, text):
         """Finds any JSON-like tool call structure in the text robustly using bracket matching."""
@@ -97,14 +101,11 @@ class HyprBrain:
             
             if end != -1:
                 json_str = text[start:end+1]
-                try:
-                    data = json.loads(json_str)
-                    if "name" in data and "arguments" in data:
-                        tool_calls.append({"id": f"call_{uuid.uuid4().hex[:8]}", "type": "function", "function": data})
-                        # FORCE SINGLE EXECUTION: truncate hallucinated trailing tool calls
-                        return tool_calls, text[:end+1]
-                except json.JSONDecodeError:
-                    pass
+                data = self._try_parse_json(json_str)
+                if data and "name" in data and "arguments" in data:
+                    tool_calls.append({"id": f"call_{uuid.uuid4().hex[:8]}", "type": "function", "function": data})
+                    # FORCE SINGLE EXECUTION: truncate hallucinated trailing tool calls
+                    return tool_calls, text[:end+1]
                 start_idx = end + 1
             else:
                 break
@@ -114,6 +115,7 @@ class HyprBrain:
     def generate_response(self, query):
         context_str = ""
         is_agent_mode = True # Always stay in agent mode for now to ensure autonomy
+        ui.reset_steps()  # Reset step counter for each new query
 
         # Base system prompt that doesn't get mutated permanently
         base_system_prompt = AGENT_SYSTEM_PROMPT
@@ -147,9 +149,13 @@ class HyprBrain:
                 "options": {"temperature": 0.0, "num_ctx": 4096} # Kept slightly lower to avoid hardware-level timeouts on long contexts
             }
 
+            # Show spinner while waiting for the LLM
+            spinner = ui.Spinner("Thinking")
+            spinner.start()
             try:
                 response = requests.post(OLLAMA_URL, json=payload, timeout=120)
                 response.raise_for_status()
+                spinner.stop()
                 result = response.json()
                 message = result.get("message", {})
                 content = message.get("content", "")
@@ -159,7 +165,8 @@ class HyprBrain:
                 text_tool_calls, cleaned_content = self.parse_tool_calls_from_text(content)
                 if text_tool_calls:
                     tool_calls.extend(text_tool_calls)
-                    content = cleaned_content
+                    # Don't show raw JSON tool calls to the user
+                    content = ""
 
                 if content:
                     yield content
@@ -180,11 +187,10 @@ class HyprBrain:
                     func_args = tool_call["function"]["arguments"]
                     call_id = tool_call.get("id", f"call_{uuid.uuid4().hex[:8]}")
 
-                    yield f" [Tool: {func_name}] "
+                    # No more inline [Tool: ...] text — ui.tool_action handles display
                     tool_result = self.call_local_tool(func_name, func_args)
                     
                     if tool_result == "ABORT_QUERY":
-                        yield "\n[Query Aborted by User.]\n"
                         abort_all = True
                         break
 
@@ -201,6 +207,7 @@ class HyprBrain:
                     break
 
             except Exception as e:
+                spinner.stop()
                 error_msg = f"System Error: {e}"
                 yield f"\n{error_msg}"
                 messages.append({"role": "user", "content": error_msg})
