@@ -27,6 +27,50 @@ def read_file(file_path):
     except Exception as e:
         return f"Error reading file: {e}"
 
+def _fix_over_escaped_content(content, file_path):
+    """Fix content where the LLM double-escaped quotes in JSON tool calls.
+    
+    The 3b model often outputs \\\" in JSON instead of \", which after JSON
+    parsing becomes literal \" in the string. This produces broken code like:
+        printf(\" %d\", nextTerm);   ← wrong
+    instead of:
+        printf(" %d", nextTerm);    ← correct
+    
+    We detect this by checking if the file has syntax errors with stray
+    backslashes, then selectively fix over-escaped quotes.
+    """
+    if '\\"' not in content:
+        return content  # nothing to fix
+
+    ext = os.path.splitext(file_path)[1].lower()
+    
+    # Only auto-fix for code files where \" outside string literals is wrong
+    fixable_exts = {'.c', '.cpp', '.h', '.hpp', '.py', '.js', '.ts', '.java',
+                    '.go', '.rs', '.sh', '.bash', '.rb', '.lua', '.php'}
+    if ext not in fixable_exts:
+        return content
+
+    # Strategy: replace \" with " but preserve legitimate escaped quotes.
+    # In correctly-formed code, \" only appears INSIDE string literals.
+    # The over-escaping pattern puts \" where " should be (at string boundaries).
+    #
+    # Heuristic: process line by line. If a line has \" and removing the
+    # backslashes produces valid-looking code (balanced quotes), apply the fix.
+    fixed_lines = []
+    for line in content.split('\n'):
+        if '\\"' in line:
+            candidate = line.replace('\\"', '"')
+            # Count quotes in the candidate — if balanced (even count), the fix is likely correct
+            quote_count = candidate.count('"') - candidate.count('\\"')
+            if quote_count % 2 == 0:
+                fixed_lines.append(candidate)
+            else:
+                fixed_lines.append(line)  # leave as-is if fix would unbalance
+        else:
+            fixed_lines.append(line)
+    return '\n'.join(fixed_lines)
+
+
 def write_file(file_path, content):
     """Writes or overwrites content to a file."""
     try:
@@ -34,6 +78,8 @@ def write_file(file_path, content):
         # Ensure directory exists
         if os.path.dirname(expanded_path):
             os.makedirs(os.path.dirname(expanded_path), exist_ok=True)
+        # Fix common LLM over-escaping before writing
+        content = _fix_over_escaped_content(content, file_path)
         with open(expanded_path, 'w', encoding='utf-8') as f:
             f.write(content)
         return f"Successfully wrote to {file_path}"
@@ -47,7 +93,7 @@ def append_file(file_path, content):
         expanded_path = expand_path(file_path)
         if not os.path.exists(expanded_path):
             return f"Error: File {file_path} does not exist to append to."
-            
+        content = _fix_over_escaped_content(content, file_path)
         with open(expanded_path, 'a', encoding='utf-8') as f:
             # ensure it starts on a new line if not empty
             if os.path.getsize(expanded_path) > 0:
@@ -194,3 +240,193 @@ def execute_command(command):
         return "Error: Command timed out after 15 seconds."
     except Exception as e:
         return f"Error executing command: {e}"
+
+
+# ─── New General Coding Tools ────────────────────────────────────────────────────
+
+def make_directory(dir_path):
+    """Creates a directory (and parents) if it doesn't exist."""
+    try:
+        expanded = expand_path(dir_path)
+        os.makedirs(expanded, exist_ok=True)
+        return f"Directory created: {dir_path}"
+    except Exception as e:
+        return f"Error creating directory: {e}"
+
+def file_exists(file_path):
+    """Checks whether a file or directory exists at the given path."""
+    expanded = expand_path(file_path)
+    if os.path.isfile(expanded):
+        return f"EXISTS (file): {file_path}"
+    elif os.path.isdir(expanded):
+        return f"EXISTS (directory): {file_path}"
+    else:
+        return f"NOT FOUND: {file_path}"
+
+def search_in_files(pattern, dir_path=".", file_glob="*"):
+    """Search for a text pattern in files under a directory. Returns matching lines."""
+    try:
+        expanded = expand_path(dir_path)
+        cmd = f'grep -rn --include="{file_glob}" "{pattern}" "{expanded}" 2>/dev/null | head -50'
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+        output = result.stdout.strip()
+        if not output:
+            return f"No matches found for '{pattern}' in {dir_path}"
+        if len(output) > 3000:
+            output = output[:3000] + "\n...[TRUNCATED]..."
+        return output
+    except subprocess.TimeoutExpired:
+        return "Error: Search timed out."
+    except Exception as e:
+        return f"Error searching: {e}"
+
+
+def insert_line(file_path, line_number, content):
+    """Inserts one or more lines at a specific line number (1-based). Existing lines shift down."""
+    try:
+        expanded = expand_path(file_path)
+        if not os.path.exists(expanded):
+            return f"Error: File {file_path} does not exist."
+        content = _fix_over_escaped_content(content, file_path)
+        with open(expanded, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        idx = max(0, min(line_number - 1, len(lines)))  # clamp to valid range
+        new_lines = content.split('\n')
+        for i, nl in enumerate(new_lines):
+            lines.insert(idx + i, nl + '\n')
+        with open(expanded, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+        return f"Inserted {len(new_lines)} line(s) at line {line_number} in {file_path}. File now has {len(lines)} lines."
+    except Exception as e:
+        return f"Error inserting line: {e}"
+
+
+def delete_lines(file_path, start_line, end_line=None):
+    """Deletes line(s) from a file. Lines are 1-based. If end_line is omitted, deletes only start_line."""
+    try:
+        expanded = expand_path(file_path)
+        if not os.path.exists(expanded):
+            return f"Error: File {file_path} does not exist."
+        with open(expanded, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        if end_line is None:
+            end_line = start_line
+        s = max(1, start_line) - 1  # convert to 0-based
+        e = min(len(lines), end_line)
+        if s >= len(lines):
+            return f"Error: start_line {start_line} is beyond end of file ({len(lines)} lines)."
+        deleted = lines[s:e]
+        del lines[s:e]
+        with open(expanded, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+        deleted_preview = ''.join(deleted).strip()
+        if len(deleted_preview) > 200:
+            deleted_preview = deleted_preview[:200] + "..."
+        return f"Deleted lines {start_line}-{end_line} from {file_path}. Removed:\n{deleted_preview}\nFile now has {len(lines)} lines."
+    except Exception as e:
+        return f"Error deleting lines: {e}"
+
+
+# Map file extension to syntax-check command
+_VALIDATORS = {
+    '.py':  'python3 -c "import py_compile; py_compile.compile(\'{path}\', doraise=True)"',
+    '.c':   'gcc -fsyntax-only "{path}"',
+    '.cpp': 'g++ -fsyntax-only "{path}"',
+    '.js':  'node --check "{path}"',
+    '.ts':  'npx tsc --noEmit "{path}" 2>&1 || true',
+    '.sh':  'bash -n "{path}"',
+    '.rs':  'rustc --edition 2021 "{path}" --crate-type lib -Z parse-only 2>&1 || true',
+    '.go':  'gofmt -e "{path}" > /dev/null',
+    '.json': 'python3 -c "import json; json.load(open(\'{path}\'))"',
+    '.yaml': 'python3 -c "import yaml; yaml.safe_load(open(\'{path}\'))"',
+    '.yml': 'python3 -c "import yaml; yaml.safe_load(open(\'{path}\'))"',
+}
+
+# Extensions where we allow "try running" for small files
+_RUNNABLE = {
+    '.py':  'python3 "{path}"',
+    '.sh':  'bash "{path}"',
+    '.js':  'node "{path}"',
+    '.c':   None,  # needs compile step, handled specially
+    '.cpp': None,
+}
+
+
+def validate_file(file_path, run=False):
+    """
+    Checks a file for syntax errors using the appropriate language tool.
+    If run=True AND the file is small (<100 lines), also executes it and returns output.
+    For C/C++: compiles to a temp binary and runs it.
+    Returns a report string.
+    """
+    try:
+        expanded = expand_path(file_path)
+        if not os.path.exists(expanded):
+            return f"Error: File {file_path} does not exist."
+
+        ext = os.path.splitext(expanded)[1].lower()
+        report_parts = []
+
+        # ── Syntax check ──
+        validator_cmd = _VALIDATORS.get(ext)
+        if validator_cmd:
+            cmd = validator_cmd.replace('{path}', expanded)
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+            if result.returncode == 0:
+                report_parts.append(f"SYNTAX CHECK: ✓ No errors found in {file_path}")
+            else:
+                stderr = result.stderr.strip() or result.stdout.strip()
+                if len(stderr) > 1500:
+                    stderr = stderr[:1500] + "\n...[TRUNCATED]..."
+                report_parts.append(f"SYNTAX CHECK: ✗ Errors found in {file_path}:\n{stderr}")
+                # Don't try running if syntax check failed
+                return "\n".join(report_parts)
+        else:
+            report_parts.append(f"SYNTAX CHECK: No validator available for '{ext}' files. Skipped.")
+
+        # ── Optional execution ──
+        if run:
+            with open(expanded, 'r', encoding='utf-8') as f:
+                line_count = sum(1 for _ in f)
+            if line_count > 100:
+                report_parts.append(f"RUN: Skipped — file has {line_count} lines (limit: 100).")
+            else:
+                run_cmd = _RUNNABLE.get(ext)
+                # Special handling for C/C++
+                if ext in ('.c', '.cpp'):
+                    compiler = 'gcc' if ext == '.c' else 'g++'
+                    tmp_bin = expanded + '.out'
+                    compile_cmd = f'{compiler} "{expanded}" -o "{tmp_bin}"'
+                    comp_result = subprocess.run(compile_cmd, shell=True, capture_output=True, text=True, timeout=15)
+                    if comp_result.returncode != 0:
+                        err = comp_result.stderr.strip()
+                        report_parts.append(f"COMPILE: ✗ Failed:\n{err}")
+                        return "\n".join(report_parts)
+                    report_parts.append("COMPILE: ✓ Success")
+                    run_cmd = f'"{tmp_bin}"'
+
+                if run_cmd:
+                    cmd = run_cmd.replace('{path}', expanded)
+                    try:
+                        exec_result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+                        stdout = exec_result.stdout.strip()
+                        stderr = exec_result.stderr.strip()
+                        if len(stdout) > 1500:
+                            stdout = stdout[:1500] + "\n...[TRUNCATED]..."
+                        if exec_result.returncode == 0:
+                            report_parts.append(f"RUN: ✓ Exit code 0\nOUTPUT:\n{stdout}")
+                        else:
+                            report_parts.append(f"RUN: ✗ Exit code {exec_result.returncode}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}")
+                    finally:
+                        # Clean up temp binary for C/C++
+                        tmp_bin = expanded + '.out'
+                        if os.path.exists(tmp_bin):
+                            os.remove(tmp_bin)
+                elif run_cmd is None and ext not in ('.c', '.cpp'):
+                    report_parts.append(f"RUN: Not supported for '{ext}' files.")
+
+        return "\n".join(report_parts)
+    except subprocess.TimeoutExpired:
+        return f"Error: Validation timed out for {file_path}."
+    except Exception as e:
+        return f"Error validating file: {e}"

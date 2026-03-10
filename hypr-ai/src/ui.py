@@ -114,6 +114,12 @@ TOOL_LABELS = {
     "append_file":          ("📝", "Appending to file"),
     "replace_line":         ("🔄", "Replacing line in file"),
     "execute_command":      ("⚡", "Running command"),
+    "make_directory":       ("📁", "Creating directory"),
+    "file_exists":          ("🔎", "Checking if path exists"),
+    "search_in_files":      ("🔍", "Searching in files"),
+    "insert_line":          ("📌", "Inserting line(s)"),
+    "delete_lines":         ("🗑️ ", "Deleting line(s)"),
+    "validate_file":        ("🔬", "Validating file"),
 }
 
 _step_counter = 0
@@ -142,6 +148,23 @@ def tool_action(name, args, step=None):
         detail = f"path = {C.BRIGHT_YELLOW}{args.get('file_path', '?')}{C.RESET}"
     elif name in ("write_file", "append_file", "replace_line"):
         detail = f"path = {C.BRIGHT_YELLOW}{args.get('file_path', '?')}{C.RESET}"
+    elif name == "make_directory":
+        detail = f"path = {C.BRIGHT_YELLOW}{args.get('dir_path', '?')}{C.RESET}"
+    elif name == "file_exists":
+        detail = f"path = {C.BRIGHT_YELLOW}{args.get('file_path', '?')}{C.RESET}"
+    elif name == "search_in_files":
+        pat = args.get('pattern', '?')
+        detail = f"pattern = {C.BRIGHT_YELLOW}{pat}{C.RESET} in {C.DIM}{args.get('dir_path', '.')}{C.RESET}"
+    elif name == "insert_line":
+        ln = args.get('line_number', '?')
+        detail = f"line {C.BRIGHT_YELLOW}{ln}{C.RESET} in {C.DIM}{args.get('file_path', '?')}{C.RESET}"
+    elif name == "delete_lines":
+        s = args.get('start_line', '?')
+        e = args.get('end_line', s)
+        detail = f"lines {C.BRIGHT_YELLOW}{s}-{e}{C.RESET} in {C.DIM}{args.get('file_path', '?')}{C.RESET}"
+    elif name == "validate_file":
+        run_flag = " + run" if args.get('run') else ""
+        detail = f"path = {C.BRIGHT_YELLOW}{args.get('file_path', '?')}{C.RESET}{C.DIM}{run_flag}{C.RESET}"
     elif name == "execute_command":
         cmd = args.get('command', '?')
         if len(cmd) > 60:
@@ -191,6 +214,31 @@ def confirm_action(name, args):
         print(f"  {C.BRIGHT_BLACK}  │{C.RESET} {C.GREEN}+ {new_line.strip()[:w - 10]}{C.RESET}")
         print(f"  {C.BRIGHT_BLACK}  └{'─' * (w - 6)}┘{C.RESET}")
 
+    elif name == "insert_line":
+        path = args.get("file_path", "?")
+        ln = args.get("line_number", "?")
+        content = args.get("content", "")
+        print(f"\n  {C.YELLOW}{C.BOLD}  ⚠  Insert at line {ln}: {path}{C.RESET}")
+        lines = content.strip().split("\n")
+        print(f"  {C.BRIGHT_BLACK}  ┌{'─' * (w - 6)}┐{C.RESET}")
+        for line in lines[:10]:
+            display_line = line[:w - 8]
+            print(f"  {C.BRIGHT_BLACK}  │{C.RESET} {C.GREEN}+ {display_line}{C.RESET}")
+        if len(lines) > 10:
+            print(f"  {C.BRIGHT_BLACK}  │{C.RESET} {C.DIM}... ({len(lines) - 10} more lines){C.RESET}")
+        print(f"  {C.BRIGHT_BLACK}  └{'─' * (w - 6)}┘{C.RESET}")
+
+    elif name == "delete_lines":
+        path = args.get("file_path", "?")
+        s = args.get("start_line", "?")
+        e = args.get("end_line", s)
+        print(f"\n  {C.YELLOW}{C.BOLD}  ⚠  Delete lines {s}-{e} in: {path}{C.RESET}")
+
+    elif name == "validate_file":
+        path = args.get("file_path", "?")
+        run_flag = " and RUN" if args.get("run") else ""
+        print(f"\n  {C.YELLOW}{C.BOLD}  ⚠  Validate{run_flag}: {path}{C.RESET}")
+
     elif name == "execute_command":
         cmd = args.get("command", "?")
         print(f"\n  {C.YELLOW}{C.BOLD}  ⚠  Execute: {C.RESET}{C.BRIGHT_YELLOW}{cmd}{C.RESET}")
@@ -228,16 +276,22 @@ def welcome():
     w = _term_width()
     print()
     print(f"  {C.CYAN}{C.BOLD}{'─' * (w - 4)}{C.RESET}")
-    print(f"  {C.CYAN}{C.BOLD}  Hypr-Pilot{C.RESET}  {C.DIM}— your Hyprland config assistant{C.RESET}")
+    print(f"  {C.CYAN}{C.BOLD}  Hypr-Pilot{C.RESET}  {C.DIM}— Hyprland expert & coding assistant{C.RESET}")
     print(f"  {C.CYAN}{C.BOLD}{'─' * (w - 4)}{C.RESET}")
-    print(f"  {C.DIM}Type your question, or 'exit' to quit.{C.RESET}")
+    print(f"  {C.DIM}Ask anything — Hyprland config, coding, or general questions.{C.RESET}")
+    print(f"  {C.DIM}Commands: /agent /chat /hypr /code /auto /help — or 'exit' to quit.{C.RESET}")
     print()
 
 
 def prompt():
     """Display the user input prompt and return input. Raises EOFError on Ctrl-C/D."""
+    # \x01 and \x02 are readline's RL_PROMPT_START_IGNORE / END_IGNORE markers.
+    # Without them readline miscounts the prompt width, breaking cursor position
+    # for backspace, up-arrow history recall, and left/right navigation.
+    rl = lambda s: f"\x01{s}\x02"
+    prompt_str = f"\n  {rl(C.BRIGHT_GREEN + C.BOLD)}You ❯{rl(C.RESET)} "
     try:
-        return input(f"\n  {C.BRIGHT_GREEN}{C.BOLD}You ❯{C.RESET} ")
+        return input(prompt_str)
     except (EOFError, KeyboardInterrupt):
         raise EOFError
 
@@ -251,6 +305,38 @@ def response_token(token):
     """Print a single streamed token."""
     sys.stdout.write(token)
     sys.stdout.flush()
+
+
+def response_end():
+    """Print a newline after the streamed response."""
+    print()
+
+
+# ─── Mode / Domain Display ───────────────────────────────────────────────────────
+
+def show_mode(mode, domain):
+    """Show the auto-detected or overridden mode and domain."""
+    mode_color = C.BRIGHT_MAGENTA if mode == "agent" else C.BRIGHT_BLUE
+    domain_color = C.BRIGHT_CYAN if domain == "hyprland" else C.BRIGHT_GREEN
+    print(f"  {C.DIM}[{C.RESET}{mode_color}{mode}{C.RESET}{C.DIM} | {C.RESET}{domain_color}{domain}{C.RESET}{C.DIM}]{C.RESET}")
+
+
+def show_slash_help():
+    """Print available slash commands."""
+    print(f"""
+  {C.BOLD}Slash Commands:{C.RESET}
+  {C.BRIGHT_YELLOW}/agent{C.RESET}   — Force agent mode (tool use, file creation)
+  {C.BRIGHT_YELLOW}/chat{C.RESET}    — Force answering mode (plain text answers)
+  {C.BRIGHT_YELLOW}/hypr{C.RESET}    — Force Hyprland domain
+  {C.BRIGHT_YELLOW}/code{C.RESET}    — Force general coding domain
+  {C.BRIGHT_YELLOW}/auto{C.RESET}    — Reset to auto-detection (default)
+  {C.BRIGHT_YELLOW}/help{C.RESET}    — Show this help
+""")
+
+
+def show_override_set(label):
+    """Confirm an override was set."""
+    print(f"  {C.GREEN}✓{C.RESET} {C.DIM}Mode override:{C.RESET} {C.BOLD}{label}{C.RESET}")
 
 
 def response_end():
