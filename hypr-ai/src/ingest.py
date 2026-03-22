@@ -77,6 +77,7 @@ class HyprIngestor:
                 print(f"Error processing {file_path}: {e}")
 
     def save_metadata(self):
+        os.makedirs(os.path.dirname(METADATA_PATH), exist_ok=True)
         with open(METADATA_PATH, 'w') as f:
             json.dump(self.chunks, f, indent=2)
         print(f"Saved {len(self.chunks)} chunks to {METADATA_PATH}")
