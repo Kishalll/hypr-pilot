@@ -5,12 +5,11 @@ import readline
 from brain import HyprBrain, RequestContext
 import ui
 
-# History file setup
 HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".hypr_ai_history")
 
 
 def handle_slash_command(query, brain):
-    """Handle /slash commands. Returns True if it was a slash command (consumed), False otherwise."""
+    """Returns True if cmd was handled, False otherwise."""
     cmd = query.strip().lower()
 
     if cmd == "/help":
@@ -43,7 +42,7 @@ def handle_slash_command(query, brain):
 def main():
     ui.welcome()
 
-    # Configure readline to handle history
+    # readline niceties
     readline.set_history_length(100)
     readline.parse_and_bind(r'"\e[3;5~": kill-word')
     readline.parse_and_bind(r'"\e[1;5C": forward-word')
@@ -90,16 +89,14 @@ def main():
         if not query.strip():
             continue
 
-        # Handle slash commands
         if query.strip().startswith("/"):
             if handle_slash_command(query, brain):
                 continue
 
-        # Generate response — spinner is managed inside brain per LLM call
         response_started = False
         
         for token in brain.generate_response(query):
-            # Only show response header before the first real text token
+            # show header only before the first real text token
             if token.strip() and not response_started:
                 ui.response_start()
                 response_started = True

@@ -1,23 +1,19 @@
-"""
-ui.py - Clean terminal UI for Hypr-Pilot (Gemini CLI-inspired)
-Provides styled output for tool actions, spinners, confirmations, and responses.
-"""
+"""terminal UI for hypr-pilot — spinners, tool displays, confirmations, all the pretty stuff."""
 
 import sys
 import time
 import threading
 import shutil
 
-# ─── ANSI Colors ────────────────────────────────────────────────────────────────
+
 
 class C:
-    """ANSI color codes."""
     RESET   = "\033[0m"
     BOLD    = "\033[1m"
     DIM     = "\033[2m"
     ITALIC  = "\033[3m"
 
-    # Foreground
+
     BLACK   = "\033[30m"
     RED     = "\033[31m"
     GREEN   = "\033[32m"
@@ -27,7 +23,7 @@ class C:
     CYAN    = "\033[36m"
     WHITE   = "\033[37m"
 
-    # Bright foreground
+
     BRIGHT_BLACK  = "\033[90m"
     BRIGHT_RED    = "\033[91m"
     BRIGHT_GREEN  = "\033[92m"
@@ -37,7 +33,7 @@ class C:
     BRIGHT_CYAN   = "\033[96m"
     BRIGHT_WHITE  = "\033[97m"
 
-    # Background
+
     BG_BLACK  = "\033[40m"
     BG_RED    = "\033[41m"
     BG_GREEN  = "\033[42m"
@@ -48,7 +44,7 @@ class C:
     BG_WHITE  = "\033[47m"
 
 
-# ─── Unicode Box Chars ──────────────────────────────────────────────────────────
+
 
 BOX_H  = "─"
 BOX_V  = "│"
@@ -57,7 +53,7 @@ BOX_TR = "╮"
 BOX_BL = "╰"
 BOX_BR = "╯"
 
-# ─── Helpers ─────────────────────────────────────────────────────────────────────
+
 
 def _term_width():
     return min(shutil.get_terminal_size((80, 24)).columns, 100)
@@ -68,10 +64,9 @@ def _bar(left, fill, right, width=None):
     return f"{left}{fill * w}{right}"
 
 
-# ─── Spinner ─────────────────────────────────────────────────────────────────────
+
 
 class Spinner:
-    """Animated spinner that runs in a background thread."""
     FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
     def __init__(self, message="Thinking"):
@@ -102,9 +97,9 @@ class Spinner:
             sys.stderr.flush()
 
 
-# ─── Tool Action Display ────────────────────────────────────────────────────────
 
-# Friendly descriptions for each tool
+
+# friendly labels for each tool
 TOOL_LABELS = {
     "get_window_class":     ("🔍", "Looking up window class"),
     "get_active_config_paths": ("📂", "Finding config file paths"),
@@ -129,14 +124,13 @@ def reset_steps():
     _step_counter = 0
 
 def tool_action(name, args, step=None):
-    """Print a clean, boxed tool action line. Returns the step number used."""
     global _step_counter
     _step_counter += 1
     n = step or _step_counter
 
     icon, label = TOOL_LABELS.get(name, ("🔧", f"Calling {name}"))
 
-    # Build detail string based on tool type
+
     detail = ""
     if name == "get_window_class":
         detail = f"app = {C.BRIGHT_YELLOW}{args.get('app_name', '?')}{C.RESET}"
@@ -179,13 +173,12 @@ def tool_action(name, args, step=None):
     return n
 
 
-# ─── Confirmation Prompt ─────────────────────────────────────────────────────────
+
 
 def confirm_action(name, args):
-    """Pretty confirmation prompt for destructive actions. Returns 'y', 'n', or 'a'."""
     w = _term_width()
 
-    # Show what will be changed
+
     if name in ("write_file", "append_file"):
         content = args.get("content", "")
         path = args.get("file_path", "?")
@@ -243,7 +236,7 @@ def confirm_action(name, args):
         cmd = args.get("command", "?")
         print(f"\n  {C.YELLOW}{C.BOLD}  ⚠  Execute: {C.RESET}{C.BRIGHT_YELLOW}{cmd}{C.RESET}")
 
-    # Prompt
+
     try:
         choice = input(f"\n  {C.BOLD}  Confirm? {C.RESET}{C.DIM}[{C.RESET}{C.GREEN}y{C.RESET}{C.DIM}/{C.RESET}{C.RED}n{C.RESET}{C.DIM}/{C.RESET}{C.YELLOW}a{C.DIM}bort]{C.RESET} ").strip().lower()
     except (EOFError, KeyboardInterrupt):
@@ -252,7 +245,7 @@ def confirm_action(name, args):
     return choice if choice in ("y", "n", "a") else "n"
 
 
-# ─── Result Display ──────────────────────────────────────────────────────────────
+
 
 def tool_result_success(message="Done"):
     print(f"  {C.GREEN}  ✓  {message}{C.RESET}")
@@ -270,7 +263,7 @@ def tool_result_aborted():
     print(f"  {C.YELLOW}  ■  Query aborted by user.{C.RESET}")
 
 
-# ─── Welcome / Prompt ────────────────────────────────────────────────────────────
+
 
 def welcome():
     w = _term_width()
@@ -284,10 +277,8 @@ def welcome():
 
 
 def prompt():
-    """Display the user input prompt and return input. Raises EOFError on Ctrl-C/D."""
-    # \x01 and \x02 are readline's RL_PROMPT_START_IGNORE / END_IGNORE markers.
-    # Without them readline miscounts the prompt width, breaking cursor position
-    # for backspace, up-arrow history recall, and left/right navigation.
+    # \x01/\x02 = readline's invisible char markers. without them,
+    # readline miscounts prompt width and cursor movement breaks.
     rl = lambda s: f"\x01{s}\x02"
     prompt_str = f"\n  {rl(C.BRIGHT_GREEN + C.BOLD)}You ❯{rl(C.RESET)} "
     try:
@@ -297,12 +288,10 @@ def prompt():
 
 
 def response_start():
-    """Print the assistant response header."""
     print(f"\n  {C.BRIGHT_CYAN}{C.BOLD}Hypr-Pilot ❯{C.RESET} ", end="", flush=True)
 
 
 def response_token(token):
-    """Print a single streamed token."""
     sys.stdout.write(token)
     sys.stdout.flush()
 
@@ -312,17 +301,15 @@ def response_end():
     print()
 
 
-# ─── Mode / Domain Display ───────────────────────────────────────────────────────
+
 
 def show_mode(mode, domain):
-    """Show the auto-detected or overridden mode and domain."""
     mode_color = C.BRIGHT_MAGENTA if mode == "agent" else C.BRIGHT_BLUE
     domain_color = C.BRIGHT_CYAN if domain == "hyprland" else C.BRIGHT_GREEN
     print(f"  {C.DIM}[{C.RESET}{mode_color}{mode}{C.RESET}{C.DIM} | {C.RESET}{domain_color}{domain}{C.RESET}{C.DIM}]{C.RESET}")
 
 
 def show_slash_help():
-    """Print available slash commands."""
     print(f"""
   {C.BOLD}Slash Commands:{C.RESET}
   {C.BRIGHT_YELLOW}/agent{C.RESET}   — Force agent mode (tool use, file creation)
@@ -335,12 +322,10 @@ def show_slash_help():
 
 
 def show_override_set(label):
-    """Confirm an override was set."""
     print(f"  {C.GREEN}✓{C.RESET} {C.DIM}Mode override:{C.RESET} {C.BOLD}{label}{C.RESET}")
 
 
 def response_end():
-    """Finish the response."""
     print()
 
 

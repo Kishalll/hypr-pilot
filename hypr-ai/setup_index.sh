@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup_index.sh - Set up Hypr-AI environment and build index
+# grabs hyprland dotfiles from community repos and builds the FAISS index
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -8,6 +8,7 @@ DATASET_DIR="$SCRIPT_DIR/../datasets"
 echo "Setting up dataset directories..."
 mkdir -p "$DATASET_DIR/hyde" "$DATASET_DIR/ill-imp" "$DATASET_DIR/m4lw"
 
+# temp folder that auto-cleans on exit
 TMP_DIR=$(mktemp -d -t hypr-pilot-fetch-XXXXXX)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -37,7 +38,7 @@ git clone --quiet --filter=blob:none https://github.com/mylinuxforwork/dotfiles.
 
 echo "Dataset fetching complete."
 
-# Check if venv exists, create if not
+# venv setup
 if [ ! -d "$SCRIPT_DIR/venv" ]; then
     echo "Creating virtual environment..."
     python3 -m venv "$SCRIPT_DIR/venv"
@@ -55,4 +56,15 @@ echo "Building FAISS index (this may take a few minutes)..."
 python3 "$SCRIPT_DIR/src/vectorstore.py"
 
 echo "Index successfully created."
-echo "You can now run 'bash run.sh'"
+echo ""
+
+# offer to set up the global 'hyprpilot' command
+read -rp "Set up the 'hyprpilot' command so you can launch from anywhere? (y/n): " SETUP_ALIAS
+if [[ "$SETUP_ALIAS" =~ ^[Yy]$ ]]; then
+    bash "$SCRIPT_DIR/setup_alias.sh"
+else
+    echo "Skipped. You can always set it up later by running: bash setup_alias.sh"
+fi
+
+echo ""
+echo "You can now run 'bash run.sh' to start Hypr-Pilot."

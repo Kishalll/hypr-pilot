@@ -1,12 +1,12 @@
 import os
 
-# ─── Paths ──────────────────────────────────────────────────────────────────────
+
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INDEX_PATH = os.path.join(BASE_DIR, "data", "index", "hypr.index")
 METADATA_PATH = os.path.join(BASE_DIR, "data", "index", "metadata.json")
 
-# Datasets Root
+
 DATASETS_ROOT = "/home/gigabyte/hypr-pilot/datasets"
 
 # ─── Model Configuration ────────────────────────────────────────────────────────
@@ -25,7 +25,7 @@ AGENT_VERBS = [
     "display", "show", "compile", "test", "open", "save",
 ]
 
-# Answering mode triggers: question words and explanation requests
+# question words / explanation requests — answering mode signals
 ANSWER_PATTERNS = [
     "what is", "what's", "what are", "whats",
     "how does", "how do", "how is", "how to",
@@ -44,19 +44,19 @@ ANSWER_PATTERNS = [
 # Hyprland-specific keywords (tightened — removed generic words like "window",
 # "float", "tile", "border", etc. that clash with general coding)
 HYPRLAND_KEYWORDS = [
-    # Core identifiers — always Hyprland
+    # core hyprland tools
     "hyprland", "hyprctl", "hypridle", "hyprlock", "hyprpaper", "hyprlang",
     "pyprland", "hyprpicker", "hyprcursor", "hyprutils", "hyprsunset",
     "hyprpolkitagent", "hyprshutdown", "hyprsysteminfo", "aquamarine",
     "xdg-desktop-portal-hyprland", "xdph",
 
-    # Config syntax — unique to Hyprland
+    # config syntax unique to hyprland
     "windowrule", "windowrulev2", "layerrule",
     "exec-once", "exec-shutdown",
     "hyprland.conf", "hyprpaper.conf", "hypridle.conf", "hyprlock.conf",
     "match:class", "match:title", "match:tag",
 
-    # Dispatchers — unique names
+    # dispatchers
     "togglefloating", "setfloating", "settiled",
     "movefocus", "movewindow", "swapwindow",
     "movetoworkspace", "movetoworkspacesilent",
@@ -70,7 +70,7 @@ HYPRLAND_KEYWORDS = [
     "focusmaster", "swapwithmaster",
     "bringactivetotop", "alterzorder",
 
-    # Config sections — unique to Hyprland
+    # config section names
     "col.active_border", "col.inactive_border",
     "gaps_in", "gaps_out", "gaps_workspaces",
     "workspace_swipe", "workspace_back_and_forth",
@@ -80,11 +80,11 @@ HYPRLAND_KEYWORDS = [
     "no_hardware_cursors",
     "direct_scanout",
 
-    # Keybind syntax
+    # keybind syntax
     "bindl", "bindr", "binde", "bindm", "bindd", "bindel", "bindn",
     "submap", "catchall",
 
-    # Ecosystem tools
+    # ecosystem tools (launchers, bars, etc.)
     "rofi", "wofi", "fuzzel", "tofi", "bemenu",
     "waybar", "eww", "ironbar", "ags",
     "swww", "mpvpaper", "wpaperd",
@@ -92,39 +92,31 @@ HYPRLAND_KEYWORDS = [
     "mako", "dunst", "swaync",
     "cliphist", "matugen",
 
-    # Wayland-specific
+    # wayland bits
     "wayland", "wl-roots", "wlroots",
 
-    # IPC
+    # IPC commands
     "hyprctl clients", "hyprctl monitors", "hyprctl workspaces",
     "hyprctl activewindow", "hyprctl keyword", "hyprctl reload",
 ]
 
-# Hyprland config-mutation keywords (subset that triggers strict guardrails)
+# subset of keywords that trigger the strict guardrail checks before config writes
 HYPRLAND_RULE_KEYWORDS = [
-    # Window rules
+
     "windowrule", "window rule", "windowrulev2",
     "window class", "wm class", "app class",
     "layerrule", "layer rule", "workspace rule",
     "match:class", "match:title", "match:tag",
-
-    # Rule management phrases
     "add rule", "set rule", "create rule",
     "add keybind", "set keybind", "create keybind",
     "add bind", "set bind",
     "add monitor", "set monitor", "add workspace", "set workspace",
-
-    # Keybinds
     "keybind", "key bind", "unbind",
-
-    # Exec / Autostart
     "exec-once", "exec-shutdown", "autostart",
-
-    # Config editing
     "hyprland.conf", "hyprpaper.conf", "hypridle.conf", "hyprlock.conf",
 ]
 
-# Legacy alias used by existing code
+# backward compat
 DOMAIN_KEYWORDS = HYPRLAND_KEYWORDS
 
 # ─── System Prompts (4 variants) ────────────────────────────────────────────────
@@ -134,8 +126,8 @@ _PERSONALITY = """You are Hypr-Pilot, a friendly and expert terminal assistant.
 - Ignore minor typos unless critical to the solution.
 - If you don't know something, say so. Don't hallucinate."""
 
-# 1) Hyprland + Answering: explain/discuss Hyprland topics using RAG context
-# NOTE: This is a template — {home_dir} is filled at runtime in brain.py
+# hyprland + answering: explain things using RAG context
+# {home_dir} gets filled in at runtime by brain.py
 HYPRLAND_ANSWER_PROMPT = """{personality}
 
 You are answering a question about Hyprland or its ecosystem.
@@ -152,8 +144,8 @@ For window rules, show the single-line syntax:
 If the user asks a follow-up like "where do I put this?", assume they mean the previous code you showed.
 Do NOT use tools — just answer in plain text."""
 
-# 2) Hyprland + Agent: modify Hyprland config files with tool calls
-# NOTE: This is a template — {personality} and {home_dir} are filled at runtime in brain.py
+# hyprland + agent: actually modifying config files
+# {personality} and {home_dir} filled at runtime
 HYPRLAND_AGENT_PROMPT = """{personality}
 
 You are an agent that modifies Hyprland configuration files. You have access to tools.
@@ -187,7 +179,7 @@ EDITING FILES:
 13. To remove specific lines, use `delete_lines` with start_line and end_line.
 14. After modifying a config file, use `validate_file` to check for syntax errors."""
 
-# 3) General Coding + Answering: explain code, algorithms, concepts
+# general coding + answering: just explain stuff
 CODING_ANSWER_PROMPT = f"""{_PERSONALITY}
 
 You are answering a general programming or technical question.
@@ -195,8 +187,8 @@ Provide clear, accurate explanations with code examples when helpful.
 Use proper formatting: wrap code in markdown fences with the language tag.
 Do NOT use tools — just answer in plain text."""
 
-# 4) General Coding + Agent: create files, write code, run commands
-# NOTE: This prompt is a template — {home_dir} and {cwd} are filled at runtime in brain.py
+# general coding + agent: file creation, code writing, command running
+# {home_dir} and {cwd} filled at runtime
 CODING_AGENT_PROMPT = """{personality}
 
 You are a coding agent that can create files, write programs, and run commands.
@@ -238,6 +230,6 @@ EDITING EXISTING FILES:
 12. replace_line needs: file_path, old_line (exact text), new_line (replacement text). It does NOT take line_number.
 13. insert_line needs: file_path, line_number (1-based), content (text to insert). It does NOT take old_line/new_line."""
 
-# Legacy aliases for backward compat during transition
+# backward compat aliases
 AGENT_SYSTEM_PROMPT = HYPRLAND_AGENT_PROMPT
 CHAT_SYSTEM_PROMPT = CODING_ANSWER_PROMPT

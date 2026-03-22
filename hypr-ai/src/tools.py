@@ -3,11 +3,9 @@ import subprocess
 import re
 
 def expand_path(path):
-    """Expands ~ and environment variables in a path."""
     return os.path.expanduser(os.path.expandvars(path))
 
 def list_directory(dir_path="."):
-    """Lists files and folders in a given directory."""
     try:
         expanded_path = expand_path(dir_path)
         items = os.listdir(expanded_path)
@@ -16,7 +14,6 @@ def list_directory(dir_path="."):
         return f"Error listing directory: {e}"
 
 def read_file(file_path):
-    """Reads the content of a file."""
     try:
         expanded_path = expand_path(file_path)
         with open(expanded_path, 'r', encoding='utf-8') as f:
@@ -28,57 +25,43 @@ def read_file(file_path):
         return f"Error reading file: {e}"
 
 def _fix_over_escaped_content(content, file_path):
-    """Fix content where the LLM double-escaped quotes in JSON tool calls.
-    
-    The 3b model often outputs \\\" in JSON instead of \", which after JSON
-    parsing becomes literal \" in the string. This produces broken code like:
-        printf(\" %d\", nextTerm);   ← wrong
-    instead of:
-        printf(" %d", nextTerm);    ← correct
-    
-    We detect this by checking if the file has syntax errors with stray
-    backslashes, then selectively fix over-escaped quotes.
-    """
+    """The 3b model loves double-escaping quotes in JSON tool calls.
+    \\\" becomes literal \" after parsing, which breaks code.
+    We detect and selectively fix this per-line."""
     if '\\"' not in content:
         return content  # nothing to fix
 
     ext = os.path.splitext(file_path)[1].lower()
     
-    # Only auto-fix for code files where \" outside string literals is wrong
+    # only worth auto-fixing in code files
     fixable_exts = {'.c', '.cpp', '.h', '.hpp', '.py', '.js', '.ts', '.java',
                     '.go', '.rs', '.sh', '.bash', '.rb', '.lua', '.php'}
     if ext not in fixable_exts:
         return content
 
-    # Strategy: replace \" with " but preserve legitimate escaped quotes.
-    # In correctly-formed code, \" only appears INSIDE string literals.
-    # The over-escaping pattern puts \" where " should be (at string boundaries).
-    #
-    # Heuristic: process line by line. If a line has \" and removing the
-    # backslashes produces valid-looking code (balanced quotes), apply the fix.
+    # per-line heuristic: if removing \ before " gives balanced quotes, apply the fix
     fixed_lines = []
     for line in content.split('\n'):
         if '\\"' in line:
             candidate = line.replace('\\"', '"')
-            # Count quotes in the candidate — if balanced (even count), the fix is likely correct
+            # balanced quotes = probably safe to fix
             quote_count = candidate.count('"') - candidate.count('\\"')
             if quote_count % 2 == 0:
                 fixed_lines.append(candidate)
             else:
-                fixed_lines.append(line)  # leave as-is if fix would unbalance
+                fixed_lines.append(line)  # leave it alone if it'd unbalance things
         else:
             fixed_lines.append(line)
     return '\n'.join(fixed_lines)
 
 
 def write_file(file_path, content):
-    """Writes or overwrites content to a file."""
     try:
         expanded_path = expand_path(file_path)
-        # Ensure directory exists
+        # make sure parent dirs exist
         if os.path.dirname(expanded_path):
             os.makedirs(os.path.dirname(expanded_path), exist_ok=True)
-        # Fix common LLM over-escaping before writing
+        # fix the model's escape addiction before writing
         content = _fix_over_escaped_content(content, file_path)
         with open(expanded_path, 'w', encoding='utf-8') as f:
             f.write(content)
@@ -87,7 +70,6 @@ def write_file(file_path, content):
         return f"Error writing file: {e}"
 
 def append_file(file_path, content):
-    """Appends content to the end of a file."""
     try:
 
         expanded_path = expand_path(file_path)
@@ -95,7 +77,7 @@ def append_file(file_path, content):
             return f"Error: File {file_path} does not exist to append to."
         content = _fix_over_escaped_content(content, file_path)
         with open(expanded_path, 'a', encoding='utf-8') as f:
-            # ensure it starts on a new line if not empty
+            # start on a new line if file isn't empty
             if os.path.getsize(expanded_path) > 0:
                 f.write("\n")
             f.write(content)
@@ -104,7 +86,7 @@ def append_file(file_path, content):
         return f"Error appending to file: {e}"
 
 def get_window_class(app_name):
-    """Finds the accurate window class name for an application by checking running clients and desktop files."""
+    """Looks up the real WM class for an app via hyprctl and .desktop files."""
     try:
         import json
         result = subprocess.run("hyprctl clients -j", shell=True, capture_output=True, text=True)
@@ -131,7 +113,7 @@ def get_window_class(app_name):
                             if match:
                                 return f"SUCCESS: Found in desktop file. The exact class is '{match.group(1).strip()}'"
                             else:
-                                # Fallback to the desktop file name (standard for modern Wayland apps)
+                                # fallback: use the desktop file name (usually correct for wayland apps)
                                 fallback_class = os.path.basename(file_path).replace('.desktop', '')
                                 return f"SUCCESS: Found in desktop file (fallback). The exact class is '{fallback_class}'"
                     except:
@@ -142,7 +124,7 @@ def get_window_class(app_name):
         return f"Error finding class: {e}"
 
 def get_active_config_paths():
-    """Reads hyprland.conf to find where rules are sourced, and identifies the rules file."""
+    """Finds the main hyprland.conf and any sourced files, figures out where rules live."""
     try:
         base_dir = expand_path("~/.config/hypr")
         path = os.path.join(base_dir, "hyprland.conf")
@@ -161,7 +143,7 @@ def get_active_config_paths():
             elif not s.startswith('/'):
                 s = os.path.join(base_dir, s)
             resolved.append(s)
-            # Identify the rules file (prefer custom/rules over hyprland/rules)
+            # prefer custom/rules over hyprland/rules if both exist
             if 'rules' in os.path.basename(s).lower():
                 if rules_file is None or 'custom' in s.lower():
                     rules_file = s
@@ -189,7 +171,7 @@ def get_active_config_paths():
         return f"Error reading config: {e}"
 
 def replace_line(file_path, old_line, new_line):
-    """Replaces a specific line in a file. Use this to fix existing broken rules instead of appending duplicates."""
+    """Swaps out one specific line in a file (exact match)."""
     try:
         expanded_path = expand_path(file_path)
         if not os.path.exists(expanded_path):
@@ -216,20 +198,20 @@ def replace_line(file_path, old_line, new_line):
         return f"Error replacing line: {e}"
 
 def execute_command(command):
-    """Runs a shell command and returns the output."""
+    """Runs a shell command and captures the output."""
+    # hard no on anything that could nuke the system
     dangerous = ["rm -rf /", "mkfs", "dd if="]
     for d in dangerous:
         if d in command:
             return f"Error: Command '{command}' is considered unsafe and blocked."
             
     try:
-        # Commands already handle ~ in shell=True, but we'll keep it consistent
         result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=15)
         
         output = result.stdout if result.stdout else ""
         error = result.stderr if result.stderr else ""
         
-        # Limit output length to prevent breaking context window
+        # cap output so it doesn't blow up the context window
         if len(output) > 2000:
             output = output[:2000] + "\n...[OUTPUT TRUNCATED]..."
         if len(error) > 2000:
@@ -254,7 +236,6 @@ def make_directory(dir_path):
         return f"Error creating directory: {e}"
 
 def file_exists(file_path):
-    """Checks whether a file or directory exists at the given path."""
     expanded = expand_path(file_path)
     if os.path.isfile(expanded):
         return f"EXISTS (file): {file_path}"
@@ -264,7 +245,6 @@ def file_exists(file_path):
         return f"NOT FOUND: {file_path}"
 
 def search_in_files(pattern, dir_path=".", file_glob="*"):
-    """Search for a text pattern in files under a directory. Returns matching lines."""
     try:
         expanded = expand_path(dir_path)
         cmd = f'grep -rn --include="{file_glob}" "{pattern}" "{expanded}" 2>/dev/null | head -50'
@@ -282,7 +262,6 @@ def search_in_files(pattern, dir_path=".", file_glob="*"):
 
 
 def insert_line(file_path, line_number, content):
-    """Inserts one or more lines at a specific line number (1-based). Existing lines shift down."""
     try:
         expanded = expand_path(file_path)
         if not os.path.exists(expanded):
@@ -302,7 +281,6 @@ def insert_line(file_path, line_number, content):
 
 
 def delete_lines(file_path, start_line, end_line=None):
-    """Deletes line(s) from a file. Lines are 1-based. If end_line is omitted, deletes only start_line."""
     try:
         expanded = expand_path(file_path)
         if not os.path.exists(expanded):
@@ -311,7 +289,7 @@ def delete_lines(file_path, start_line, end_line=None):
             lines = f.readlines()
         if end_line is None:
             end_line = start_line
-        s = max(1, start_line) - 1  # convert to 0-based
+        s = max(1, start_line) - 1  # 0-based
         e = min(len(lines), end_line)
         if s >= len(lines):
             return f"Error: start_line {start_line} is beyond end of file ({len(lines)} lines)."
@@ -327,7 +305,7 @@ def delete_lines(file_path, start_line, end_line=None):
         return f"Error deleting lines: {e}"
 
 
-# Map file extension to syntax-check command
+# extension -> syntax check command
 _VALIDATORS = {
     '.py':  'python3 -c "import py_compile; py_compile.compile(\'{path}\', doraise=True)"',
     '.c':   'gcc -fsyntax-only "{path}"',
@@ -342,7 +320,7 @@ _VALIDATORS = {
     '.yml': 'python3 -c "import yaml; yaml.safe_load(open(\'{path}\'))"',
 }
 
-# Extensions where we allow "try running" for small files
+# extensions we can also try running (small files only)
 _RUNNABLE = {
     '.py':  'python3 "{path}"',
     '.sh':  'bash "{path}"',
@@ -353,12 +331,7 @@ _RUNNABLE = {
 
 
 def validate_file(file_path, run=False):
-    """
-    Checks a file for syntax errors using the appropriate language tool.
-    If run=True AND the file is small (<100 lines), also executes it and returns output.
-    For C/C++: compiles to a temp binary and runs it.
-    Returns a report string.
-    """
+    """Syntax-check a file. Optionally run it too (small files only)."""
     try:
         expanded = expand_path(file_path)
         if not os.path.exists(expanded):
@@ -367,7 +340,7 @@ def validate_file(file_path, run=False):
         ext = os.path.splitext(expanded)[1].lower()
         report_parts = []
 
-        # ── Syntax check ──
+        # syntax check
         validator_cmd = _VALIDATORS.get(ext)
         if validator_cmd:
             cmd = validator_cmd.replace('{path}', expanded)
@@ -379,12 +352,12 @@ def validate_file(file_path, run=False):
                 if len(stderr) > 1500:
                     stderr = stderr[:1500] + "\n...[TRUNCATED]..."
                 report_parts.append(f"SYNTAX CHECK: ✗ Errors found in {file_path}:\n{stderr}")
-                # Don't try running if syntax check failed
+                # no point running if syntax failed
                 return "\n".join(report_parts)
         else:
             report_parts.append(f"SYNTAX CHECK: No validator available for '{ext}' files. Skipped.")
 
-        # ── Optional execution ──
+        # optional: run it
         if run:
             with open(expanded, 'r', encoding='utf-8') as f:
                 line_count = sum(1 for _ in f)
@@ -392,7 +365,7 @@ def validate_file(file_path, run=False):
                 report_parts.append(f"RUN: Skipped — file has {line_count} lines (limit: 100).")
             else:
                 run_cmd = _RUNNABLE.get(ext)
-                # Special handling for C/C++
+                # C/C++ needs a compile step first
                 if ext in ('.c', '.cpp'):
                     compiler = 'gcc' if ext == '.c' else 'g++'
                     tmp_bin = expanded + '.out'
@@ -418,7 +391,7 @@ def validate_file(file_path, run=False):
                         else:
                             report_parts.append(f"RUN: ✗ Exit code {exec_result.returncode}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}")
                     finally:
-                        # Clean up temp binary for C/C++
+                        # clean up temp binary for C/C++
                         tmp_bin = expanded + '.out'
                         if os.path.exists(tmp_bin):
                             os.remove(tmp_bin)

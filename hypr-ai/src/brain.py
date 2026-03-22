@@ -16,14 +16,13 @@ from schemas import TOOLS, HYPRLAND_TOOLS, CODING_TOOLS
 import tools
 import ui
 
-# Personality text block for runtime prompt formatting
 _PERSONALITY_BLOCK = _PERSONALITY
 
 
-# ─── Request Context ────────────────────────────────────────────────────────────
+
 
 class RequestContext:
-    """Holds the routing decision for a single user query."""
+    """Routing decision for a single query."""
     __slots__ = ("mode", "domain", "use_rag", "use_tools", "system_prompt", "forced")
 
     MODE_ANSWER = "answering"
@@ -44,48 +43,45 @@ class RequestContext:
         return f"<Ctx mode={self.mode} domain={self.domain} rag={self.use_rag} tools={self.use_tools}>"
 
 
-# ─── Router ─────────────────────────────────────────────────────────────────────
+
 
 def route_query(query, override_mode=None, override_domain=None):
-    """Classify a query into (mode, domain) and return a RequestContext."""
+    """Figure out what the user wants and where to send it."""
     q = query.lower().strip()
 
-    # ── Domain detection ──
+    # what is this about?
     if override_domain:
         domain = override_domain
     else:
         hypr_score = sum(1 for kw in HYPRLAND_KEYWORDS if kw in q)
-        # Boost multi-word matches (they're more specific)
+        # multi-word matches are more specific, weight them higher
         for kw in HYPRLAND_KEYWORDS:
             if " " in kw and kw in q:
                 hypr_score += 2
         domain = RequestContext.DOMAIN_HYPRLAND if hypr_score >= 1 else RequestContext.DOMAIN_CODING
 
-    # ── Mode detection ──
+    # do they want an answer or an action?
     if override_mode:
         mode = override_mode
     else:
         agent_score = 0
         answer_score = 0
 
-        # Check for action verbs (agent signals)
         for verb in AGENT_VERBS:
-            # Match verb at word boundary to avoid false positives
             if re.search(r'\b' + re.escape(verb) + r'\b', q):
                 agent_score += 1
 
-        # Check for question / explanation patterns (answer signals)
+        # question patterns get heavier weight since they're more distinctive
         for pat in ANSWER_PATTERNS:
             if pat in q:
-                answer_score += 2  # Stronger weight — question patterns are more distinctive
+                answer_score += 2
 
-        # If the query ends with '?' it's likely a question
         if q.rstrip().endswith("?"):
             answer_score += 1
 
         mode = RequestContext.MODE_AGENT if agent_score > answer_score else RequestContext.MODE_ANSWER
 
-    # ── Select prompt and capabilities ──
+    # pair up the right prompt + capabilities
     if domain == RequestContext.DOMAIN_HYPRLAND:
         if mode == RequestContext.MODE_AGENT:
             ctx = RequestContext(mode, domain, use_rag=True, use_tools=True,
@@ -105,10 +101,10 @@ def route_query(query, override_mode=None, override_domain=None):
     return ctx
 
 
-# ─── Hyprland Guardrails ────────────────────────────────────────────────────────
+
 
 class HyprlandGuard:
-    """Enforces mandatory tool-call ordering for Hyprland config mutations."""
+    """Makes sure the model does its homework before touching hyprland configs."""
 
     def __init__(self):
         self.reset()
@@ -120,10 +116,9 @@ class HyprlandGuard:
         self._rules_file_path = None
 
     def record_tool(self, name, args, result):
-        """Track which prerequisite tools have been called."""
         if name == "get_active_config_paths":
             self.got_config_paths = True
-            # Extract the rules file path from the result
+            # grab the rules file path from the output
             for line in str(result).split("\n"):
                 if ">>> RULES FILE" in line:
                     parts = line.split(":", 1)
@@ -137,15 +132,14 @@ class HyprlandGuard:
                 self.read_rules_file = True
 
     def check_write(self, name, args):
-        """Returns an error string if a write to Hyprland config is attempted without prerequisites.
-        Returns None if the write is allowed."""
+        """Block writes to hyprland config if the model skipped the prerequisite steps."""
         if name not in ("write_file", "append_file", "replace_line"):
             return None
 
         target = tools.expand_path(args.get("file_path", ""))
         hypr_dir = tools.expand_path("~/.config/hypr")
 
-        # Only guard writes inside ~/.config/hypr/
+        # only care about writes inside ~/.config/hypr/
         if not target.startswith(hypr_dir):
             return None
 
@@ -155,7 +149,7 @@ class HyprlandGuard:
         if not self.read_rules_file:
             errors.append("You must `read_file` the rules file before modifying it.")
 
-        # For windowrule-related content, also require get_window_class
+        # windowrule edits also need the actual window class first
         content = args.get("content", "") + args.get("new_line", "")
         if "windowrule" in content.lower() and not self.got_window_class:
             errors.append("You must call `get_window_class` first before adding window rules.")
@@ -165,23 +159,21 @@ class HyprlandGuard:
         return None
 
 
-# ─── Brain ──────────────────────────────────────────────────────────────────────
-
 class HyprBrain:
     def __init__(self):
         self.store = HyprVectorStore()
-        self.history = []  # Clean history: only user/assistant text pairs, no tool messages
+        self.history = []
         self._override_mode = None
         self._override_domain = None
         try:
             self.store.load_index()
         except:
-            pass  # Index may not exist yet
+            pass  # index might not be built yet, that's fine
 
-    # ── Slash command overrides ──
+    # --- slash command overrides ---
 
     def set_override(self, mode=None, domain=None):
-        """Set a sticky override for mode/domain. Pass None to clear."""
+
         self._override_mode = mode
         self._override_domain = domain
 
@@ -189,10 +181,8 @@ class HyprBrain:
         self._override_mode = None
         self._override_domain = None
 
-    # ── Tool execution ──
-
-    # ── Parameter normalization for small-model mistakes ──
-    # The 3b model frequently sends wrong arg names when tools have similar signatures.
+    # the 3b model mixes up arg names when tools have similar signatures,
+    # so we fix the most common mistakes before passing them through
     _PARAM_FIXES = {
         "replace_line": {
             # Model sends insert_line args to replace_line
@@ -207,7 +197,6 @@ class HyprBrain:
     }
 
     def _normalize_args(self, name, args):
-        """Fix common parameter name mismatches from the small LLM."""
         fixes = self._PARAM_FIXES.get(name)
         if not fixes:
             return args
@@ -216,25 +205,24 @@ class HyprBrain:
             if k in fixes:
                 mapped = fixes[k]
                 if mapped is None:
-                    continue  # drop this arg
+                    continue
                 fixed[mapped] = v
             else:
                 fixed[k] = v
         return fixed
 
     def call_local_tool(self, name, args, ctx=None, guard=None):
-        """Execute a tool call with validation and user confirmation."""
         args = self._normalize_args(name, args)
         ui.tool_action(name, args)
 
-        # ── Hyprland guardrails (Python-enforced, not just prompt-based) ──
+        # guardrail check (hard-enforced, not just prompt instructions)
         if ctx and ctx.domain == RequestContext.DOMAIN_HYPRLAND and guard:
             block_msg = guard.check_write(name, args)
             if block_msg:
                 ui.tool_result_error("Guardrail: prerequisite tools not called yet.")
                 return block_msg
 
-        # ── Path validation for file writes ──
+        # path validation for file writes
         if name in ("write_file", "append_file", "replace_line", "insert_line", "delete_lines"):
             target_path = tools.expand_path(args.get('file_path', ''))
             if name in ("append_file", "replace_line", "insert_line", "delete_lines"):
@@ -251,7 +239,7 @@ class HyprBrain:
                     ui.tool_result_error(f"Directory does not exist: {parent_dir}")
                     return f"Action denied: The directory '{parent_dir}' does not exist. Please use an existing directory."
 
-        # ── replace_line: verify old line exists before confirming ──
+        # make sure the line actually exists before asking user to confirm
         if name == "replace_line":
             target_path = tools.expand_path(args.get('file_path', ''))
             old_line = args.get('old_line', '').strip()
@@ -265,7 +253,7 @@ class HyprBrain:
                 ui.tool_result_error(str(e))
                 return f"Error reading file: {e}"
 
-        # ── validate_file with run=True needs user permission ──
+        # running code needs explicit user permission
         if name == "validate_file" and args.get("run"):
             choice = ui.confirm_action(name, args)
             if choice == 'a':
@@ -273,11 +261,11 @@ class HyprBrain:
                 return "ABORT_QUERY"
             elif choice != 'y':
                 ui.tool_result_denied("Skipped by user.")
-                # Still do syntax check, just skip the run
+                # still do the syntax check, just don't execute
                 args = dict(args)
                 args["run"] = False
 
-        # ── User confirmation for destructive actions ──
+        # anything destructive gets a confirmation prompt
         if name in ("write_file", "append_file", "replace_line", "insert_line", "delete_lines", "execute_command"):
             choice = ui.confirm_action(name, args)
             if choice == 'a':
@@ -287,13 +275,13 @@ class HyprBrain:
                 ui.tool_result_denied("Skipped by user.")
                 return "User denied execution."
 
-        # ── Execute ──
+        # actually run the thing
         func = getattr(tools, name, None)
         if func:
             try:
                 result = func(**args)
                 ui.tool_result_success()
-                # Track for Hyprland guardrails
+
                 if guard:
                     guard.record_tool(name, args, result)
                 return result
@@ -303,10 +291,10 @@ class HyprBrain:
         ui.tool_result_error(f"Tool '{name}' not found.")
         return f"Error: Tool '{name}' not found."
 
-    # ── JSON parsing helpers (unchanged from original) ──
+    # --- json parsing helpers ---
 
     def _try_parse_json(self, json_str):
-        r"""Parse JSON with fallback repairs for common LLM escape mistakes."""
+        r"""Try parsing JSON, fix common escape mistakes if it fails."""
         try:
             return json.loads(json_str)
         except json.JSONDecodeError:
@@ -321,7 +309,7 @@ class HyprBrain:
                     return None
 
     def parse_tool_calls_from_text(self, text):
-        """Finds any JSON-like tool call structure in the text robustly using bracket matching."""
+        """Hunt for tool call JSON in the model's text output (bracket matching)."""
         if not text: return [], text
 
         fence_match = re.search(r'```(?:json)?\s*\n(.+?)\n```', text, re.DOTALL)
@@ -383,59 +371,50 @@ class HyprBrain:
                 
         return tool_calls, text
 
-    # ── Main response generation ──
+    # --- main response loop ---
 
     def generate_response(self, query):
-        """Route the query, select prompt/tools, call LLM, enforce guardrails."""
         ui.reset_steps()
 
-        # ── Route ──
         ctx = route_query(query, self._override_mode, self._override_domain)
         ui.show_mode(ctx.mode, ctx.domain)
 
-        # ── Hyprland guardrail tracker (per-query) ──
+        # fresh guardrail tracker per query
         guard = HyprlandGuard() if ctx.domain == RequestContext.DOMAIN_HYPRLAND else None
 
-        # ── Build messages (inject real paths into prompt) ──
+        # inject real paths into the system prompt
         system_prompt = ctx.system_prompt
         _home = os.path.expanduser("~")
         _cwd = os.getcwd()
         if ctx.mode == RequestContext.MODE_AGENT and ctx.domain != RequestContext.DOMAIN_HYPRLAND:
-            # Coding agent prompt is a template with {personality}, {home_dir}, {cwd}
             system_prompt = system_prompt.format(
                 personality=_PERSONALITY_BLOCK,
                 home_dir=_home,
                 cwd=_cwd,
             )
         elif ctx.domain == RequestContext.DOMAIN_HYPRLAND:
-            # Hyprland prompts are templates with {personality}, {home_dir}
             system_prompt = system_prompt.format(
                 personality=_PERSONALITY_BLOCK,
                 home_dir=_home,
             )
         messages = [{"role": "system", "content": system_prompt}]
 
-        # ── History injection (filtered by mode to prevent cross-contamination) ──
-        # Agent-mode history (tool calls, file creation) should NOT leak into answering mode.
-        # For answering mode: only include answering-mode history entries.
-        # For agent mode: include all recent history for continuity (e.g. "run it" follow-ups).
+        # filter history by mode so agent tool-call chatter doesn't leak into Q&A
         filtered_history = []
         for entry in self.history:
             entry_mode = entry.get("_mode", "answer")
-            if ctx.mode == RequestContext.MODE_ANSWER:
-                # Only include previous answering-mode exchanges
+            if ctx.mode == RequestContext.MODE_ANSWER:  # only Q&A history for Q&A mode
+
                 if entry_mode == RequestContext.MODE_ANSWER:
                     filtered_history.append(entry)
-            else:
-                # Agent mode: include everything for continuity
+            else:  # agent mode gets everything for continuity
                 filtered_history.append(entry)
         history_limit = 6 if ctx.mode == RequestContext.MODE_ANSWER else 10
         for entry in filtered_history[-history_limit:]:
-            # Send only role+content to the LLM (strip our metadata)
             messages.append({"role": entry["role"], "content": entry["content"]})
 
-        # ── RAG injection (only for Hyprland domain) ──
-        user_query = query  # Keep original for history
+        # RAG injection for hyprland queries
+        user_query = query
         if ctx.use_rag:
             context_chunks = self.store.search(query, k=3)
             if context_chunks:
@@ -445,25 +424,24 @@ class HyprBrain:
                     context_str += f"\n--- Reference {i+1} ({source_info}) ---\n{chunk['content']}\n"
                 query = f"[SYSTEM: Here is relevant Hyprland context. Use it if applicable.]\n{context_str}\n\n[USER QUERY]: {query}"
 
-        # ── Follow-up enrichment for short agent queries ──
-        # When the user says things like "run it", "compile it", "yes do it",
-        # inject context from the last agent exchange so the model knows what "it" refers to.
+        # when the user says something short like "run it", give the model
+        # context from the previous exchange so it knows what "it" means
         if ctx.mode == RequestContext.MODE_AGENT and len(user_query.split()) <= 8:
             last_agent_entries = [e for e in self.history if e.get("_mode") == RequestContext.MODE_AGENT]
             if last_agent_entries:
                 last_assistant = [e for e in last_agent_entries if e["role"] == "assistant"]
                 if last_assistant:
                     prev_context = last_assistant[-1]["content"]
-                    # Extract file paths from previous assistant message
+
                     path_matches = re.findall(r'(/[\w./~-]+\.\w+)', prev_context)
                     if path_matches:
                         paths_str = ", ".join(path_matches[:3])
                         query += f"\n\n[CONTEXT from previous task: files involved: {paths_str}]"
 
-        # ── Hyprland config-mutation reminder ──
+        # extra reminders for hyprland config edits (the 3b model needs nudging)
         is_hypr_mutation = ctx.domain == RequestContext.DOMAIN_HYPRLAND and ctx.mode == RequestContext.MODE_AGENT
         if is_hypr_mutation:
-            # Check if this is specifically about rules/config changes
+
             q_lower = user_query.lower()
             needs_rule_guard = any(kw in q_lower for kw in HYPRLAND_RULE_KEYWORDS)
             if needs_rule_guard:
@@ -473,15 +451,15 @@ class HyprBrain:
 
         messages.append({"role": "user", "content": query})
 
-        # ── Select tool set ──
+        # pick the right toolset
         if not ctx.use_tools:
-            active_tools = None  # No tools in answering mode
+            active_tools = None
         elif ctx.domain == RequestContext.DOMAIN_HYPRLAND:
-            active_tools = TOOLS  # Full set including Hyprland-specific tools
+            active_tools = TOOLS
         else:
-            active_tools = CODING_TOOLS  # General coding tools only
+            active_tools = CODING_TOOLS
 
-        # ── Answering mode: single LLM call, no tool loop ──
+        # answering mode: one-shot, no tool loop
         if ctx.mode == RequestContext.MODE_ANSWER:
             payload = {
                 "model": LLM_MODEL,
@@ -506,9 +484,9 @@ class HyprBrain:
                 yield f"\nSystem Error: {e}"
             return
 
-        # ── Agent mode: iterative tool-call loop ──
+        # agent mode: tool-call loop
         max_iterations = 10
-        _prev_tool_key = None  # Track (name, args_key) to detect duplicate calls
+        _prev_tool_key = None  # for duplicate detection
         for iteration in range(max_iterations):
             payload = {
                 "model": LLM_MODEL,
@@ -530,7 +508,7 @@ class HyprBrain:
                 content = message.get("content", "")
                 tool_calls = message.get("tool_calls", [])
 
-                # Extract tool calls from text if model put them inline
+                # sometimes the model jams tool calls into its text response
                 text_tool_calls, cleaned_content = self.parse_tool_calls_from_text(content)
                 if text_tool_calls:
                     tool_calls.extend(text_tool_calls)
@@ -555,7 +533,7 @@ class HyprBrain:
                     func_args = tool_call["function"]["arguments"]
                     call_id = tool_call.get("id", f"call_{uuid.uuid4().hex[:8]}")
 
-                    # ── Duplicate detection: break if model repeats the same call ──
+                    # catch the model if it's stuck in a loop
                     tool_key = (func_name, json.dumps(func_args, sort_keys=True))
                     if tool_key == _prev_tool_key:
                         ui.tool_result_error("Duplicate tool call detected — stopping loop.")
@@ -576,11 +554,9 @@ class HyprBrain:
                         "tool_call_id": call_id
                     })
                     
-                    # FORCE SEQUENTIAL: one tool at a time
-                    break 
+                    break  # one tool at a time, always
                     
                 if abort_all or loop_break:
-                    # Still save clean history so the model remembers what happened
                     self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode})
                     self.history.append({"role": "assistant", "content": content or "Task completed.", "_mode": ctx.mode})
                     break
@@ -591,8 +567,7 @@ class HyprBrain:
                 yield f"\n{error_msg}"
                 messages.append({"role": "user", "content": error_msg})
                 continue
-        else:
-            # max_iterations reached — save history anyway
+        else:  # hit the iteration ceiling
             self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode})
             self.history.append({"role": "assistant", "content": "Task completed (iteration limit reached).", "_mode": ctx.mode})
 

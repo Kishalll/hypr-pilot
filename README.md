@@ -104,9 +104,18 @@ bash setup_index.sh
 
 After this, no internet is needed — everything runs locally.
 
+At the end, the script will ask if you want to set up the `hyprpilot` command so you can launch from any directory. You can also do this later by running `bash setup_alias.sh` from the `hypr-ai/` folder.
+
 ### 5. Run it
 
 ```bash
+hyprpilot
+```
+
+Or from the project directory:
+
+```bash
+cd hypr-ai
 bash run.sh
 ```
 

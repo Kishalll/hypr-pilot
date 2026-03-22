@@ -123,7 +123,7 @@ _TOOL_EXECUTE_CMD = {
     }
 }
 
-# ─── Hyprland-only tools ────────────────────────────────────────────────────────
+# hyprland-only tools
 
 _TOOL_GET_WINDOW_CLASS = {
     "type": "function",
@@ -156,7 +156,7 @@ _TOOL_GET_CONFIG_PATHS = {
     }
 }
 
-# ─── Coding-only tools ──────────────────────────────────────────────────────────
+# coding-only tools
 
 _TOOL_MAKE_DIR = {
     "type": "function",
@@ -310,20 +310,20 @@ _SHARED_TOOLS = [
     _TOOL_VALIDATE_FILE,
 ]
 
-# Full Hyprland set: shared + Hyprland-specific
+# hyprland gets the shared set + window class lookup + config path discovery
 HYPRLAND_TOOLS = _SHARED_TOOLS + [
     _TOOL_GET_WINDOW_CLASS,
     _TOOL_GET_CONFIG_PATHS,
 ]
 
-# General coding set: shared + coding-specific
+# coding gets the shared set + mkdir, file_exists, grep
 CODING_TOOLS = _SHARED_TOOLS + [
     _TOOL_MAKE_DIR,
     _TOOL_FILE_EXISTS,
     _TOOL_SEARCH_FILES,
 ]
 
-# Legacy: full combined set (used as default / backward compat)
+# full combined set (legacy / backward compat)
 TOOLS = _SHARED_TOOLS + [
     _TOOL_GET_WINDOW_CLASS,
     _TOOL_GET_CONFIG_PATHS,

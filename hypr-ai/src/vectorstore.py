@@ -4,12 +4,12 @@ import faiss
 import numpy as np
 import logging
 
-# Suppress noisy model loading reports and library logs
+# shut up, libraries
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
 os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
 os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
 
-# Silencing logging from libraries
+
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
@@ -18,7 +18,7 @@ from sentence_transformers import SentenceTransformer
 from transformers import logging as transformers_logging
 transformers_logging.set_verbosity_error()
 
-# Global disable for tqdm (to hide "Loading weights")
+# kill tqdm progress bars (the "loading weights" noise)
 from tqdm import tqdm
 from functools import partialmethod
 tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
@@ -40,15 +40,12 @@ class HyprVectorStore:
         contents = [item['content'] for item in self.metadata]
         embeddings = self.model.encode(contents, show_progress_bar=True)
         
-        # Convert to float32 for FAISS
         embeddings = np.array(embeddings).astype('float32')
         
-        # Initialize FAISS IndexFlatL2
         dimension = embeddings.shape[1]
         self.index = faiss.IndexFlatL2(dimension)
         self.index.add(embeddings)
         
-        # Save index
         faiss.write_index(self.index, INDEX_PATH)
         print(f"Index saved to {INDEX_PATH}")
 
@@ -64,7 +61,7 @@ class HyprVectorStore:
     def search(self, query, k=5):
         if self.index is None:
             if not self.load_index():
-                return [] # Return empty if index literally doesn't exist
+                return []
         
         query_vector = self.model.encode([query]).astype('float32')
         distances, indices = self.index.search(query_vector, k)
@@ -74,7 +71,7 @@ class HyprVectorStore:
             if idx < len(self.metadata):
                 results.append(self.metadata[idx])
         
-        # Sort results by priority (Wiki first)
+        # wiki first, community dotfiles after
         results.sort(key=lambda x: x['priority'])
         return results
 

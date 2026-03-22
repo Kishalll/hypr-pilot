@@ -7,7 +7,7 @@ from config import DATASETS_ROOT, METADATA_PATH
 class HyprIngestor:
     def __init__(self):
         self.chunks = []
-        # Priority mapping: lower is more authoritative
+        # lower number = more authoritative
         self.priority_map = {
             "hyprland-wiki": 1,
             "hyde": 2,
@@ -16,11 +16,9 @@ class HyprIngestor:
         }
 
     def chunk_conf(self, content, source_path):
-        """Split .conf by top-level blocks { ... } and standalone assignments."""
-        # Capture blocks like input { ... }
+        """Split .conf into top-level blocks and standalone assignments."""
         blocks = re.findall(r'(\w+\s*\{[\s\S]*?^\})', content, re.MULTILINE)
         
-        # Capture top-level assignments outside blocks (simplified)
         standalone = re.findall(r'^(\w+\s*=\s*.*)$', content, re.MULTILINE)
         
         return blocks + standalone
@@ -44,10 +42,10 @@ class HyprIngestor:
                 continue
             
             ext = os.path.splitext(file_path)[1]
-            # Adjust path splitting for local structure
+            # figure out which dataset this file belongs to
             parts = file_path.split("/")
             try:
-                # Assuming structure: /path/to/datasets/dataset_name/...
+                # structure: /path/to/datasets/dataset_name/...
                 idx = parts.index("datasets")
                 dataset_name = parts[idx+1]
             except (ValueError, IndexError):
@@ -64,8 +62,7 @@ class HyprIngestor:
                     file_chunks = self.chunk_conf(content, file_path)
                 elif ext == ".md":
                     file_chunks = self.chunk_md(content)
-                elif ext == ".sh":
-                    # Simple line-block chunking for scripts
+                elif ext == ".sh":  # scripts just get chopped into ~500 char blocks
                     file_chunks = [content[i:i+500] for i in range(0, len(content), 500)]
                 
                 for chunk in file_chunks:
