@@ -63,6 +63,7 @@ Overrides are sticky — once you type `/agent`, every query after that runs in 
 - **Disk**: ~3 GB (model weights + Python deps + FAISS index)
 - **CPU**: Any modern x86_64 processor
 - **Python**: 3.10+
+- **Git**: Required by the setup script to fetch datasets
 - **Ollama**: Installed and working
 
 ### Recommended
@@ -94,12 +95,14 @@ cd hypr-pilot
 
 ### 4. Build the index
 
-This creates the virtual environment, installs dependencies, ingests the datasets, and builds the FAISS vector index. Takes a few minutes on first run.
+This is a one-time setup that requires an internet connection. The script pulls community dotfiles (HyDE, end-4, ML4W) from their original GitHub repositories at pinned commit hashes, extracts the Hyprland config files, creates a virtual environment, installs Python dependencies, and builds the FAISS vector index. Takes a few minutes on first run.
 
 ```bash
 cd hypr-ai
 bash setup_index.sh
 ```
+
+After this, no internet is needed — everything runs locally.
 
 ### 5. Run it
 

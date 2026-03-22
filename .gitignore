@@ -1,1 +1,13 @@
 hypr-ai/.hypr_ai_history
+
+# Downloaded datasets (fetched by setup_index.sh)
+datasets/hyde/
+datasets/ill-imp/
+datasets/m4lw/
+
+# Built FAISS index and processed chunks
+hypr-ai/data/
+
+# Python
+hypr-ai/venv/
+__pycache__/
