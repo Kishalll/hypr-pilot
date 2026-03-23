@@ -2,6 +2,67 @@ import os
 import subprocess
 import re
 
+_WINDOW_PROPS = {
+    "match:class", "match:title", "match:initial_class", "match:initial_title",
+    "match:tag", "match:xwayland", "match:float", "match:fullscreen",
+    "match:pin", "match:focus", "match:group", "match:modal",
+    "match:fullscreen_state_client", "match:fullscreen_state_internal",
+    "match:workspace", "match:content", "match:xdg_tag",
+}
+
+_LAYER_PROPS = {"match:namespace"}
+
+_WINDOW_EFFECTS_MIN_ARGS = {
+    "float": 1, "tile": 1, "fullscreen": 1, "maximize": 1,
+    "fullscreen_state": 2, "move": 2, "size": 2, "center": 1,
+    "pseudo": 1, "monitor": 1, "workspace": 1, "no_initial_focus": 1,
+    "pin": 1, "group": 0, "suppress_event": 1, "content": 1,
+    "no_close_for": 1,
+
+    "persistent_size": 1, "no_max_size": 1, "stay_focused": 1,
+    "animation": 1, "border_color": 1, "idle_inhibit": 1,
+    "opacity": 1, "tag": 1, "max_size": 2, "min_size": 2,
+    "border_size": 1, "rounding": 1, "rounding_power": 1,
+    "allows_input": 1, "dim_around": 1, "decorate": 1,
+    "focus_on_activate": 1, "keep_aspect_ratio": 1,
+    "nearest_neighbor": 1, "no_anim": 1, "no_blur": 1,
+    "no_dim": 1, "no_focus": 1, "no_follow_mouse": 1,
+    "no_shadow": 1, "no_shortcuts_inhibit": 1, "no_screen_share": 1,
+    "no_vrr": 1, "opaque": 1, "force_rgbx": 1,
+    "sync_fullscreen": 1, "immediate": 1, "xray": 1,
+    "render_unfocused": 1, "scroll_mouse": 1, "scroll_touchpad": 1,
+    "scrolling_width": 1,
+}
+
+_LAYER_EFFECTS_MIN_ARGS = {
+    "no_anim": 1, "blur": 1, "blur_popups": 1, "ignore_alpha": 1,
+    "dim_around": 1, "xray": 1, "animation": 1, "order": 1,
+    "above_lock": 1, "no_screen_share": 1,
+}
+
+_WINDOW_BOOL_EFFECTS = {
+    "float", "tile", "fullscreen", "maximize", "center", "pseudo", "pin",
+    "no_initial_focus", "persistent_size", "no_max_size", "stay_focused",
+    "allows_input", "dim_around", "decorate", "focus_on_activate",
+    "keep_aspect_ratio", "nearest_neighbor", "no_anim", "no_blur",
+    "no_dim", "no_focus", "no_follow_mouse", "no_shadow",
+    "no_shortcuts_inhibit", "no_screen_share", "no_vrr", "opaque",
+    "force_rgbx", "sync_fullscreen", "immediate", "xray", "render_unfocused",
+}
+
+_LAYER_BOOL_EFFECTS = {
+    "no_anim", "blur", "blur_popups", "dim_around", "no_screen_share",
+}
+
+
+def _normalize_on_off(value):
+    v = (value or "").strip().lower()
+    if v in ("on", "true", "yes", "1"):
+        return "on"
+    if v in ("off", "false", "no", "0"):
+        return "off"
+    return None
+
 def expand_path(path):
     return os.path.expanduser(os.path.expandvars(path))
 
@@ -89,37 +150,117 @@ def get_window_class(app_name):
     """Looks up the real WM class for an app via hyprctl and .desktop files."""
     try:
         import json
+        import shutil
+
+        original_name = app_name
+        app_name = (app_name or "").strip()
+
+        term_aliases = ["terminal", "term", "my terminal", "current terminal"]
+        term_markers = [
+            "kitty", "alacritty", "wezterm", "foot", "gnome-terminal",
+            "konsole", "terminator", "xterm", "urxvt", "st",
+            "tilix", "lxterminal", "xfce4-terminal",
+        ]
+
+        def is_terminal_class(cls):
+            c = (cls or "").lower()
+            return any(m in c for m in term_markers)
+
+        # For one-to-one intents like "terminal", prefer active window class first.
+        if app_name.lower() in term_aliases:
+            active = subprocess.run("hyprctl activewindow -j", shell=True, capture_output=True, text=True)
+            if active.returncode == 0 and active.stdout.strip():
+                data = json.loads(active.stdout)
+                cls = data.get("class")
+                if cls and is_terminal_class(cls):
+                    return f"SUCCESS: Active window class detected as '{cls}'"
+
+            # If active window is not a terminal (e.g. code), pick from running terminal windows.
+            result_clients = subprocess.run("hyprctl clients -j", shell=True, capture_output=True, text=True)
+            if result_clients.returncode == 0 and result_clients.stdout.strip():
+                clients = json.loads(result_clients.stdout)
+                terminal_classes = []
+                seen = set()
+                for c in clients:
+                    cls = c.get('class', '')
+                    if cls and is_terminal_class(cls) and cls.lower() not in seen:
+                        seen.add(cls.lower())
+                        terminal_classes.append(cls)
+                if len(terminal_classes) == 1:
+                    return f"SUCCESS: Detected running terminal class '{terminal_classes[0]}'"
+                if len(terminal_classes) > 1:
+                    return f"SUCCESS: Detected running terminal class '{terminal_classes[0]}'"
+        
+        if app_name.lower() in term_aliases:
+            term_env = os.environ.get("TERM", "").lower()
+            common_terms = ["kitty", "alacritty", "wezterm", "foot", "gnome-terminal", "konsole", "terminator", "st", "urxvt"]
+            for ct in common_terms:
+                if ct in term_env:
+                    app_name = ct
+                    break
+            if app_name.lower() in term_aliases:
+                for ct in common_terms:
+                    if shutil.which(ct):
+                        app_name = ct
+                        break
+                        
         result = subprocess.run("hyprctl clients -j", shell=True, capture_output=True, text=True)
-        clients = json.loads(result.stdout)
-        for c in clients:
-            if app_name.lower() in c.get('class', '').lower() or app_name.lower() in c.get('title', '').lower():
-                return f"SUCCESS: App is running. The exact class is '{c.get('class')}'"
+        if result.returncode == 0:
+            clients = json.loads(result.stdout)
+
+            # exact class match first
+            for c in clients:
+                cls = c.get('class', '')
+                if cls and app_name.lower() == cls.lower():
+                    return f"SUCCESS: Exact running class match found: '{cls}'"
+
+            for c in clients:
+                if app_name.lower() in c.get('class', '').lower() or app_name.lower() in c.get('title', '').lower():
+                    return f"SUCCESS: App is running. The exact class is '{c.get('class')}'"
     except:
         pass
     
     try:
-        cmd = f'grep -i -E "Name=.*{app_name}|Exec=.*{app_name}" /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop 2>/dev/null'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        output = result.stdout
-        if output:
-            for line in output.split('\\n'):
-                if not line.strip(): continue
-                file_path = line.split(':')[0]
-                if file_path.endswith('.desktop'):
+        import glob
+        dirs = ['/usr/share/applications', expand_path('~/.local/share/applications')]
+        all_desktops = []
+        for d in dirs:
+            if os.path.exists(d):
+                all_desktops.extend(glob.glob(os.path.join(d, '*.desktop')))
+                
+        base_name = re.split(r'[- _]', app_name)[0].lower()
+        search_terms = [app_name.lower()]
+        if base_name and base_name != app_name.lower():
+            search_terms.append(base_name)
+            
+        for term in search_terms:
+            for file_path in all_desktops:
+                filename = os.path.basename(file_path).lower()
+                is_match = term in filename
+                
+                if not is_match:
                     try:
                         with open(file_path, 'r', encoding='utf-8') as f:
                             content = f.read()
-                            match = re.search(r'^StartupWMClass=(.+)', content, re.MULTILINE)
-                            if match:
-                                return f"SUCCESS: Found in desktop file. The exact class is '{match.group(1).strip()}'"
-                            else:
-                                # fallback: use the desktop file name (usually correct for wayland apps)
-                                fallback_class = os.path.basename(file_path).replace('.desktop', '')
-                                return f"SUCCESS: Found in desktop file (fallback). The exact class is '{fallback_class}'"
+                        if re.search(f'^(Name|Exec)=.*{re.escape(term)}', content, re.IGNORECASE | re.MULTILINE):
+                            is_match = True
                     except:
                         continue
-            return f"Found desktop files but couldn't isolate StartupWMClass. Need human intervention."
-        return f"Could not find exact class for '{app_name}'. Ask the user directly."
+                
+                if is_match:
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        match = re.search(r'^StartupWMClass=(.+)', content, re.MULTILINE)
+                        if match:
+                            return f"SUCCESS: Found in desktop file. The exact class is '{match.group(1).strip()}'"
+                        else:
+                            fallback_class = os.path.basename(file_path).replace('.desktop', '')
+                            return f"SUCCESS: Found in desktop file (fallback). The exact class is '{fallback_class}'"
+                    except:
+                        continue
+                        
+        return f"Could not find exact class for '{original_name}'. Ask the user directly."
     except Exception as e:
         return f"Error finding class: {e}"
 
@@ -161,14 +302,133 @@ def get_active_config_paths():
         if rules_file and os.path.exists(rules_file):
             res += f"\n>>> RULES FILE (use this for window rules): {rules_file}\n"
         elif rules_file:
-            res += f"\n>>> Rules file referenced but MISSING: {rules_file}\n"
-            res += f">>> Fallback: append rules directly to {path}\n"
+            res += f"\n>>> RULES FILE (referenced but missing): {rules_file}\n"
+            res += f">>> You MUST use `mkdir` to create the parent directories, then use `write_file` to create this rules file.\n"
         else:
             res += f"\n>>> No dedicated rules file found. Append rules directly to {path}\n"
 
         return res
     except Exception as e:
         return f"Error reading config: {e}"
+
+
+def _parse_match_segments(matches):
+    if not isinstance(matches, str):
+        return None, "`matches` must be a string"
+
+    parts = [p.strip() for p in matches.split(',') if p.strip()]
+    if not parts:
+        return None, "`matches` must include at least one match:* segment"
+
+    parsed = []
+    seen = set()
+    for p in parts:
+        tokens = p.split()
+        if len(tokens) < 2:
+            return None, f"match segment '{p}' is missing a value"
+        key = tokens[0].lower()
+        value = " ".join(tokens[1:]).strip()
+        if not key.startswith("match:"):
+            return None, f"match segment '{p}' must start with match:*"
+        if key in seen:
+            return None, f"duplicate match prop '{key}' is not allowed"
+        seen.add(key)
+        parsed.append((key, value))
+    return parsed, None
+
+
+def build_hypr_rule_line(rule_type, effect, effect_args, matches):
+    rule_type = (rule_type or "").strip().lower()
+    effect = (effect or "").strip().lower()
+    effect_args = (effect_args or "").strip()
+
+    if rule_type not in ("windowrule", "layerrule"):
+        return None, "`rule_type` must be 'windowrule' or 'layerrule'"
+
+    parsed_matches, err = _parse_match_segments(matches)
+    if err:
+        return None, err
+
+    if rule_type == "windowrule":
+        allowed_props = _WINDOW_PROPS
+        effects_min_args = _WINDOW_EFFECTS_MIN_ARGS
+    else:
+        allowed_props = _LAYER_PROPS
+        effects_min_args = _LAYER_EFFECTS_MIN_ARGS
+
+    for key, _ in parsed_matches:
+        if key not in allowed_props:
+            return None, f"unknown prop '{key}' for {rule_type}"
+
+    if effect not in effects_min_args:
+        return None, f"unknown effect '{effect}' for {rule_type}"
+
+    arg_count = len(effect_args.split()) if effect_args else 0
+    min_required = effects_min_args[effect]
+    if arg_count < min_required:
+        return None, f"effect '{effect}' requires at least {min_required} argument(s)"
+
+    arg_tokens = effect_args.split() if effect_args else []
+
+    if rule_type == "windowrule" and effect in _WINDOW_BOOL_EFFECTS:
+        if len(arg_tokens) != 1:
+            return None, f"effect '{effect}' requires exactly one boolean value (on/off)"
+        normalized = _normalize_on_off(arg_tokens[0])
+        if normalized is None:
+            return None, f"effect '{effect}' expects a boolean value (on/off)"
+        effect_args = normalized
+
+    if rule_type == "layerrule" and effect in _LAYER_BOOL_EFFECTS:
+        if len(arg_tokens) != 1:
+            return None, f"effect '{effect}' requires exactly one boolean value (on/off)"
+        normalized = _normalize_on_off(arg_tokens[0])
+        if normalized is None:
+            return None, f"effect '{effect}' expects a boolean value (on/off)"
+        effect_args = normalized
+
+    if rule_type == "layerrule" and effect == "xray":
+        if len(arg_tokens) != 1:
+            return None, "effect 'xray' requires exactly one argument (on/off/0/1/unset)"
+        val = arg_tokens[0].lower()
+        if val in ("0", "1", "unset"):
+            effect_args = val
+        else:
+            normalized = _normalize_on_off(val)
+            if normalized is None:
+                return None, "effect 'xray' expects on/off/0/1/unset"
+            effect_args = "1" if normalized == "on" else "0"
+
+    match_str = ", ".join([f"{k} {v}" for k, v in parsed_matches])
+    effect_segment = f"{effect} {effect_args}".strip()
+    line = f"{rule_type} = {effect_segment}, {match_str}"
+    return line, None
+
+
+def upsert_hypr_rule(file_path, rule_type, effect, effect_args, matches):
+    """Build a validated Hyprland rule line and append if not already present."""
+    try:
+        expanded_path = expand_path(file_path)
+        if not os.path.exists(expanded_path):
+            return f"Error: File {file_path} does not exist."
+
+        line, err = build_hypr_rule_line(rule_type, effect, effect_args, matches)
+        if err:
+            return f"Error: {err}"
+
+        with open(expanded_path, 'r', encoding='utf-8') as f:
+            existing_lines = [l.rstrip('\n') for l in f.readlines()]
+
+        if any(l.strip() == line.strip() for l in existing_lines):
+            return f"Rule already exists in {file_path}: {line}"
+
+        with open(expanded_path, 'a', encoding='utf-8') as f:
+            if os.path.getsize(expanded_path) > 0:
+                f.write("\n")
+            f.write(line)
+
+        return f"Successfully upserted rule in {file_path}: {line}"
+    except Exception as e:
+        return f"Error upserting rule: {e}"
 
 def replace_line(file_path, old_line, new_line):
     """Swaps out one specific line in a file (exact match)."""

@@ -115,9 +115,20 @@ TOOL_LABELS = {
     "insert_line":          ("📌", "Inserting line(s)"),
     "delete_lines":         ("🗑️ ", "Deleting line(s)"),
     "validate_file":        ("🔬", "Validating file"),
+    "upsert_hypr_rule":     ("🧩", "Upserting Hypr rule"),
 }
 
 _step_counter = 0
+_DEBUG_MODE = False
+
+
+def set_debug_mode(enabled):
+    global _DEBUG_MODE
+    _DEBUG_MODE = bool(enabled)
+
+
+def is_debug_mode():
+    return _DEBUG_MODE
 
 def reset_steps():
     global _step_counter
@@ -140,7 +151,7 @@ def tool_action(name, args, step=None):
         detail = f"path = {C.BRIGHT_YELLOW}{args.get('dir_path', '.')}{C.RESET}"
     elif name == "read_file":
         detail = f"path = {C.BRIGHT_YELLOW}{args.get('file_path', '?')}{C.RESET}"
-    elif name in ("write_file", "append_file", "replace_line"):
+    elif name in ("write_file", "append_file", "replace_line", "upsert_hypr_rule"):
         detail = f"path = {C.BRIGHT_YELLOW}{args.get('file_path', '?')}{C.RESET}"
     elif name == "make_directory":
         detail = f"path = {C.BRIGHT_YELLOW}{args.get('dir_path', '?')}{C.RESET}"
@@ -236,6 +247,18 @@ def confirm_action(name, args):
         cmd = args.get("command", "?")
         print(f"\n  {C.YELLOW}{C.BOLD}  ⚠  Execute: {C.RESET}{C.BRIGHT_YELLOW}{cmd}{C.RESET}")
 
+    elif name == "upsert_hypr_rule":
+        path = args.get("file_path", "?")
+        rule_type = str(args.get("rule_type", "windowrule")).strip()
+        effect = str(args.get("effect", "")).strip()
+        effect_args = str(args.get("effect_args", "")).strip()
+        matches = str(args.get("matches", "")).strip()
+        line = f"{rule_type} = {effect} {effect_args}, {matches}".replace("  ", " ").strip()
+        print(f"\n  {C.YELLOW}{C.BOLD}  ⚠  Upsert rule in: {path}{C.RESET}")
+        print(f"  {C.BRIGHT_BLACK}  ┌{'─' * (w - 6)}┐{C.RESET}")
+        print(f"  {C.BRIGHT_BLACK}  │{C.RESET} {C.GREEN}{line[:w - 8]}{C.RESET}")
+        print(f"  {C.BRIGHT_BLACK}  └{'─' * (w - 6)}┘{C.RESET}")
+
 
     try:
         choice = input(f"\n  {C.BOLD}  Confirm? {C.RESET}{C.DIM}[{C.RESET}{C.GREEN}y{C.RESET}{C.DIM}/{C.RESET}{C.RED}n{C.RESET}{C.DIM}/{C.RESET}{C.YELLOW}a{C.DIM}bort]{C.RESET} ").strip().lower()
@@ -272,7 +295,7 @@ def welcome():
     print(f"  {C.CYAN}{C.BOLD}  Hypr-Pilot{C.RESET}  {C.DIM}— Hyprland expert & coding assistant{C.RESET}")
     print(f"  {C.CYAN}{C.BOLD}{'─' * (w - 4)}{C.RESET}")
     print(f"  {C.DIM}Ask anything — Hyprland config, coding, or general questions.{C.RESET}")
-    print(f"  {C.DIM}Commands: /agent /chat /hypr /code /auto /help — or 'exit' to quit.{C.RESET}")
+    print(f"  {C.DIM}Commands: /agent /chat /hypr /code /general /debug on|off /auto /help — or 'exit' to quit.{C.RESET}")
     print()
 
 
@@ -316,6 +339,8 @@ def show_slash_help():
   {C.BRIGHT_YELLOW}/chat{C.RESET}    — Force answering mode (plain text answers)
   {C.BRIGHT_YELLOW}/hypr{C.RESET}    — Force Hyprland domain
   {C.BRIGHT_YELLOW}/code{C.RESET}    — Force general coding domain
+    {C.BRIGHT_YELLOW}/general{C.RESET} — Force general Q&A domain
+    {C.BRIGHT_YELLOW}/debug on|off{C.RESET} — Toggle debug output (guardrail/internal details)
   {C.BRIGHT_YELLOW}/auto{C.RESET}    — Reset to auto-detection (default)
   {C.BRIGHT_YELLOW}/help{C.RESET}    — Show this help
 """)

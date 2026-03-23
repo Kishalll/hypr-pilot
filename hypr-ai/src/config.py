@@ -22,7 +22,7 @@ AGENT_VERBS = [
     "edit", "change", "modify", "update", "fix", "replace", "remove",
     "delete", "install", "run", "execute", "append", "move", "rename",
     "configure", "setup", "set up", "enable", "disable", "toggle",
-    "display", "show", "compile", "test", "open", "save",
+    "display", "show", "compile", "test", "open", "save","code this"
 ]
 
 # question words / explanation requests — answering mode signals
@@ -40,15 +40,29 @@ ANSWER_PATTERNS = [
     "list the", "list all",
 ]
 
+# coding/question indicators to separate coding Q&A from general Q&A
+CODING_KEYWORDS = [
+    "code", "program", "script", "function", "method", "class", "object", "variable",
+    "array", "string", "loop", "recursion", "algorithm", "data structure", "bug", "debug",
+    "compile", "compiler", "syntax", "runtime", "stack trace", "exception", "segfault",
+    "api", "endpoint", "json", "yaml", "xml", "regex", "sql", "database",
+    "python", "c", "c++", "cpp", "java", "javascript", "typescript", "rust", "go", "bash", "shell",
+]
+
 # ─── Router: Domain Detection ───────────────────────────────────────────────────
-# Hyprland-specific keywords (tightened — removed generic words like "window",
-# "float", "tile", "border", etc. that clash with general coding)
 HYPRLAND_KEYWORDS = [
     # core hyprland tools
     "hyprland", "hyprctl", "hypridle", "hyprlock", "hyprpaper", "hyprlang",
     "pyprland", "hyprpicker", "hyprcursor", "hyprutils", "hyprsunset",
     "hyprpolkitagent", "hyprshutdown", "hyprsysteminfo", "aquamarine",
     "xdg-desktop-portal-hyprland", "xdph",
+
+    # natural language window management
+    "tile my", "float my", "center my", "move my", "resize my",
+    "make my window", "make my browser", "make it float", "make it tile",
+    "make floating", "make tiled", "window manager", "my workspace",
+    "my monitor", "my screen", "float this", "tile this", "move this",
+    "resize this", "float", "tile", "center",
 
     # config syntax unique to hyprland
     "windowrule", "windowrulev2", "layerrule",
@@ -119,7 +133,7 @@ HYPRLAND_RULE_KEYWORDS = [
 # backward compat
 DOMAIN_KEYWORDS = HYPRLAND_KEYWORDS
 
-# ─── System Prompts (4 variants) ────────────────────────────────────────────────
+# ─── System Prompts (5 variants) ────────────────────────────────────────────────
 
 _PERSONALITY = """You are Hypr-Pilot, a friendly and expert terminal assistant.
 - Be concise, direct, and conversational. No corporate cliches.
@@ -140,11 +154,21 @@ ENVIRONMENT:
 
 Always prioritize the 'hyprland-wiki' syntax when showing config examples.
 For window rules, show the single-line syntax:
-  windowrule = match:class ^(exact_class)$, float on
+    windowrule = match:class ^(exact_class)$, <effect> <arg>
+Do not assume a specific effect unless the user asked for it explicitly.
 If the user asks a follow-up like "where do I put this?", assume they mean the previous code you showed.
 Do NOT use tools — just answer in plain text."""
 
-# hyprland + agent: actually modifying config files
+# general + answering: non-coding, non-hyprland questions
+GENERAL_ANSWER_PROMPT = f"""{_PERSONALITY}
+
+You are answering general knowledge and everyday questions.
+Give concise, practical answers in plain language.
+This assistant is for a Linux-only environment by default.
+Do not mention Windows or macOS workflows unless the user explicitly asks for those OSes.
+If the user asks something coding-related, provide a brief answer and suggest asking in coding mode.
+Do NOT use tools — just answer in plain text."""
+
 # {personality} and {home_dir} filled at runtime
 HYPRLAND_AGENT_PROMPT = """{personality}
 
@@ -160,14 +184,20 @@ ALWAYS FOLLOW:
 1. Conversational responses: write plain text. DO NOT output empty JSON `{{}}` blocks.
 
 HYPRLAND CONFIG RULES (MANDATORY):
-2. NEVER guess the window class. Use `get_window_class` first to get the precise class name.
+2. NEVER guess the window class.
+    - If the user states a generic app type (e.g., "browser", "code editor"), ASK them WHICH specific app they are using (e.g. "Which browser?") in plain text and WAIT for their reply. DO NOT guess "Brave-browser" or "Kitty".
+    - If the request is a one-to-one app intent like "my terminal", do not ask for brand first. Use `get_window_class` and let the tool detect the exact class from the running session.
+   - If the user names a specific app (e.g., "Firefox", "Alacritty", "VSCode", "Discord", "Spotify"), IMMEDIATELY use `get_window_class` to find its exact class name, then proceed to modify the config files.
 3. NEVER guess the config path. Call `get_active_config_paths` — use the >>> RULES FILE it returns.
 4. NEVER append directly to `hyprland.conf` — always use the dedicated rules file.
 5. Before adding a rule, `read_file` the rules file to check for existing rules for the same class.
-6. If an existing rule is found: use `replace_line`. If none exists: use `append_file`.
-7. Window rule syntax (single line only):
-   windowrule = match:class ^(app_class_here)$, tile on
-8. Always prioritize the 'hyprland-wiki' syntax.
+6. For any window/layer rule mutation, DO NOT use raw `append_file`/`replace_line`.
+    Use `upsert_hypr_rule(file_path, rule_type, effect, effect_args, matches)` so the line is built and validated deterministically.
+7. Window rule anonymous syntax from the Hyprland wiki:
+   windowrule = match:class <regex>, <effect> <arg>
+   Example: windowrule = match:class ^(kitty)$, rounding 10
+    Determine the correct <effect> and <arg> from the user's intent. Never hardcode specific effects globally.
+8. Never write sections like `[global]` for Hyprland window behavior requests. Use `windowrule` or `layerrule` entries only.
 
 WHEN TO STOP:
 9. Once you have completed the user's request (e.g. added a rule, fixed a config), write a SHORT summary of what you did in plain text and STOP. Do NOT repeat the same action.
@@ -177,7 +207,10 @@ WHEN TO STOP:
 EDITING FILES:
 12. To add lines at a specific position, use `insert_line` with a 1-based line number.
 13. To remove specific lines, use `delete_lines` with start_line and end_line.
-14. After modifying a config file, use `validate_file` to check for syntax errors."""
+14. After modifying a config file, use `validate_file` to check for syntax errors.
+
+RAG PRIORITY:
+15. Treat Hyprland wiki syntax as canonical baseline. Use community dotfiles only as secondary style/reference context."""
 
 # general coding + answering: just explain stuff
 CODING_ANSWER_PROMPT = f"""{_PERSONALITY}
@@ -185,6 +218,7 @@ CODING_ANSWER_PROMPT = f"""{_PERSONALITY}
 You are answering a general programming or technical question.
 Provide clear, accurate explanations with code examples when helpful.
 Use proper formatting: wrap code in markdown fences with the language tag.
+Assume Linux as the default runtime platform unless the user explicitly requests another OS.
 Do NOT use tools — just answer in plain text."""
 
 # general coding + agent: file creation, code writing, command running

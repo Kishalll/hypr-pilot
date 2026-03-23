@@ -1,12 +1,14 @@
 import os
 import re
 import json
+import hashlib
 from glob import glob
 from config import DATASETS_ROOT, METADATA_PATH
 
 class HyprIngestor:
     def __init__(self):
         self.chunks = []
+        self._seen_hashes = set()
         # lower number = more authoritative
         self.priority_map = {
             "hyprland-wiki": 1,
@@ -14,6 +16,68 @@ class HyprIngestor:
             "ill-imp": 2,
             "m4lw": 2
         }
+
+    @staticmethod
+    def is_junk_file(file_path):
+        name = os.path.basename(file_path).lower()
+        junk_suffixes = ("~", ".bak", ".orig", ".rej", ".tmp", ".swp")
+        if name.startswith("."):
+            return True
+        if name.endswith(junk_suffixes):
+            return True
+        if ".~" in name or name.endswith(".disabled"):
+            return True
+        return False
+
+    @staticmethod
+    def normalize_hypr_syntax(text):
+        # Normalize common legacy patterns to current docs without forcing specific effects.
+        out = text.replace("windowrulev2", "windowrule")
+        out = re.sub(r',\s*class:', ', match:class ', out)
+        out = re.sub(r',\s*title:', ', match:title ', out)
+        out = re.sub(r',\s*xwayland:', ', match:xwayland ', out)
+        out = re.sub(r',\s*floating:', ', match:float ', out)
+        out = re.sub(r',\s*fullscreen:', ', match:fullscreen ', out)
+        out = re.sub(r',\s*workspace:', ', match:workspace ', out)
+        return out
+
+    @staticmethod
+    def has_unwanted_legacy_syntax(text):
+        lowered = text.lower()
+        legacy_markers = [
+            "windowrulev2",
+            ",class:",
+            ",title:",
+            ",xwayland:",
+            ",floating:",
+            ",fullscreen:",
+            ",workspace:",
+        ]
+        return any(m in lowered for m in legacy_markers)
+
+    def add_chunk(self, chunk, source, priority, ext, dataset_name):
+        content = chunk.strip()
+        if len(content) < 20:
+            return
+
+        # Normalize syntax once globally.
+        content = self.normalize_hypr_syntax(content)
+
+        # For non-wiki community datasets, reject chunks still carrying legacy markers.
+        if dataset_name.lower() != "hyprland-wiki" and self.has_unwanted_legacy_syntax(content):
+            return
+
+        key = hashlib.sha1(content.encode("utf-8", errors="ignore")).hexdigest()
+        if key in self._seen_hashes:
+            return
+        self._seen_hashes.add(key)
+
+        self.chunks.append({
+            "content": content,
+            "source": source,
+            "priority": priority,
+            "type": ext
+        })
 
     def chunk_conf(self, content, source_path):
         """Split .conf into top-level blocks and standalone assignments."""
@@ -40,8 +104,13 @@ class HyprIngestor:
         for file_path in all_files:
             if os.path.isdir(file_path):
                 continue
+
+            if self.is_junk_file(file_path):
+                continue
             
             ext = os.path.splitext(file_path)[1]
+            if ext not in (".conf", ".md"):
+                continue
             # figure out which dataset this file belongs to
             parts = file_path.split("/")
             try:
@@ -62,17 +131,15 @@ class HyprIngestor:
                     file_chunks = self.chunk_conf(content, file_path)
                 elif ext == ".md":
                     file_chunks = self.chunk_md(content)
-                elif ext == ".sh":  # scripts just get chopped into ~500 char blocks
-                    file_chunks = [content[i:i+500] for i in range(0, len(content), 500)]
                 
                 for chunk in file_chunks:
-                    if len(chunk.strip()) < 20: continue
-                    self.chunks.append({
-                        "content": chunk.strip(),
-                        "source": file_path.replace(DATASETS_ROOT, ""),
-                        "priority": priority,
-                        "type": ext
-                    })
+                    self.add_chunk(
+                        chunk=chunk,
+                        source=file_path.replace(DATASETS_ROOT, ""),
+                        priority=priority,
+                        ext=ext,
+                        dataset_name=dataset_name,
+                    )
             except Exception as e:
                 print(f"Error processing {file_path}: {e}")
 

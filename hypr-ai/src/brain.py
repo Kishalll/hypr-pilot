@@ -5,9 +5,10 @@ import uuid
 import os
 from config import (
     OLLAMA_URL, LLM_MODEL,
-    HYPRLAND_KEYWORDS, HYPRLAND_RULE_KEYWORDS,
+    HYPRLAND_KEYWORDS, HYPRLAND_RULE_KEYWORDS, CODING_KEYWORDS,
     AGENT_VERBS, ANSWER_PATTERNS,
     HYPRLAND_ANSWER_PROMPT, HYPRLAND_AGENT_PROMPT,
+    GENERAL_ANSWER_PROMPT,
     CODING_ANSWER_PROMPT, CODING_AGENT_PROMPT,
     DOMAIN_KEYWORDS, _PERSONALITY,
 )
@@ -48,17 +49,46 @@ class RequestContext:
 def route_query(query, override_mode=None, override_domain=None):
     """Figure out what the user wants and where to send it."""
     q = query.lower().strip()
+    q_norm = re.sub(r'\s+', ' ', q).strip()
+
+    def _looks_like_hypr_nl_intent(text):
+        actions = ("float", "tile", "center", "move", "resize", "pin", "fullscreen", "opacity", "blur")
+        targets = (
+            "window", "terminal", "browser", "workspace", "monitor", "app", "client",
+            "special workspace", "scratchpad",
+            "kitty", "alacritty", "wezterm", "foot", "gnome-terminal", "konsole", "xterm",
+            "firefox", "chromium", "brave", "google-chrome", "zen-browser",
+            "vscode", "code", "neovide", "zed",
+            "discord", "spotify", "steam", "mpv", "vlc", "obs",
+            "nautilus", "thunar", "dolphin",
+            "rofi", "wofi", "fuzzel", "waybar", "eww",
+        )
+
+        has_action = any(re.search(rf'\b{a}\b', text) for a in actions)
+        has_target = any(re.search(rf'\b{t}\b', text) for t in targets)
+        has_imperative = bool(re.search(r'\b(make|set|toggle|change|move|resize|center|pin)\b', text))
+        return (has_action and has_target) or (has_imperative and has_target)
 
     # what is this about?
     if override_domain:
         domain = override_domain
     else:
-        hypr_score = sum(1 for kw in HYPRLAND_KEYWORDS if kw in q)
+        hypr_score = sum(1 for kw in HYPRLAND_KEYWORDS if kw in q_norm)
         # multi-word matches are more specific, weight them higher
         for kw in HYPRLAND_KEYWORDS:
-            if " " in kw and kw in q:
+            if " " in kw and kw in q_norm:
                 hypr_score += 2
-        domain = RequestContext.DOMAIN_HYPRLAND if hypr_score >= 1 else RequestContext.DOMAIN_CODING
+
+        if _looks_like_hypr_nl_intent(q_norm):
+            hypr_score += 3
+
+        if hypr_score >= 1:
+            domain = RequestContext.DOMAIN_HYPRLAND
+        else:
+            coding_score = sum(1 for kw in CODING_KEYWORDS if kw in q_norm)
+            if re.search(r'\b(def|class|import|#include|fn|let|const|var|select|insert|update)\b', query, flags=re.IGNORECASE):
+                coding_score += 2
+            domain = RequestContext.DOMAIN_CODING if coding_score >= 1 else RequestContext.DOMAIN_GENERAL
 
     # do they want an answer or an action?
     if override_mode:
@@ -89,13 +119,21 @@ def route_query(query, override_mode=None, override_domain=None):
         else:
             ctx = RequestContext(mode, domain, use_rag=True, use_tools=False,
                                 system_prompt=HYPRLAND_ANSWER_PROMPT)
-    else:
+    elif domain == RequestContext.DOMAIN_CODING:
         if mode == RequestContext.MODE_AGENT:
             ctx = RequestContext(mode, domain, use_rag=False, use_tools=True,
                                 system_prompt=CODING_AGENT_PROMPT)
         else:
             ctx = RequestContext(mode, domain, use_rag=False, use_tools=False,
                                 system_prompt=CODING_ANSWER_PROMPT)
+    else:
+        # No dedicated general-agent workflow: route action requests to coding agent.
+        if mode == RequestContext.MODE_AGENT:
+            ctx = RequestContext(mode, RequestContext.DOMAIN_CODING, use_rag=False, use_tools=True,
+                                system_prompt=CODING_AGENT_PROMPT)
+        else:
+            ctx = RequestContext(mode, domain, use_rag=False, use_tools=False,
+                                system_prompt=GENERAL_ANSWER_PROMPT)
 
     ctx.forced = bool(override_mode or override_domain)
     return ctx
@@ -113,6 +151,9 @@ class HyprlandGuard:
         self.got_config_paths = False
         self.got_window_class = False
         self.read_rules_file = False
+        self.require_rule_syntax = False
+        self.write_applied = False
+        self.user_denied_write = False
         self._rules_file_path = None
 
     def record_tool(self, name, args, result):
@@ -130,10 +171,16 @@ class HyprlandGuard:
             path = args.get("file_path", "")
             if self._rules_file_path and tools.expand_path(path) == tools.expand_path(self._rules_file_path):
                 self.read_rules_file = True
+        elif name in ("write_file", "append_file", "replace_line", "insert_line", "delete_lines", "upsert_hypr_rule"):
+            if isinstance(result, str) and (
+                result.lower().startswith("success")
+                or result.lower().startswith("rule already exists")
+            ):
+                self.write_applied = True
 
     def check_write(self, name, args):
         """Block writes to hyprland config if the model skipped the prerequisite steps."""
-        if name not in ("write_file", "append_file", "replace_line"):
+        if name not in ("write_file", "append_file", "replace_line", "insert_line", "delete_lines", "upsert_hypr_rule"):
             return None
 
         target = tools.expand_path(args.get("file_path", ""))
@@ -143,16 +190,154 @@ class HyprlandGuard:
         if not target.startswith(hypr_dir):
             return None
 
+        if self.require_rule_syntax and self.write_applied:
+            return "GUARDRAIL BLOCKED: A rule mutation has already been applied for this request. Do not write again; summarize completion."
+
         errors = []
         if not self.got_config_paths:
             errors.append("You must call `get_active_config_paths` first to find the correct rules file.")
         if not self.read_rules_file:
-            errors.append("You must `read_file` the rules file before modifying it.")
+            creating_missing_rules_file = (
+                name == "write_file"
+                and bool(self._rules_file_path)
+                and target == tools.expand_path(self._rules_file_path)
+                and not os.path.exists(target)
+            )
+            if not creating_missing_rules_file:
+                errors.append("You must `read_file` the rules file before modifying it.")
+
+        if self._rules_file_path and target != tools.expand_path(self._rules_file_path):
+            errors.append("You must modify only the discovered rules file, not other Hyprland config files.")
 
         # windowrule edits also need the actual window class first
-        content = args.get("content", "") + args.get("new_line", "")
+        content = "\n".join([
+            str(args.get("content", "")),
+            str(args.get("new_line", "")),
+            str(args.get("old_line", "")),
+            str(args.get("rule_type", "")),
+            str(args.get("effect", "")),
+            str(args.get("effect_args", "")),
+            str(args.get("matches", "")),
+        ])
         if "windowrule" in content.lower() and not self.got_window_class:
             errors.append("You must call `get_window_class` first before adding window rules.")
+
+        if name in ("write_file", "append_file", "replace_line", "insert_line"):
+            lowered_raw = content.lower()
+            if "windowrule" in lowered_raw or "layerrule" in lowered_raw:
+                errors.append("Use `upsert_hypr_rule` for window/layer rule mutations instead of raw file write tools.")
+
+        if self.require_rule_syntax:
+            lowered = content.lower()
+            if "[global]" in lowered:
+                errors.append("Invalid Hyprland format for this task: do not write INI sections like [global].")
+
+            window_props = {
+                "match:class", "match:title", "match:initial_class", "match:initial_title",
+                "match:tag", "match:xwayland", "match:float", "match:fullscreen",
+                "match:pin", "match:focus", "match:group", "match:modal",
+                "match:fullscreen_state_client", "match:fullscreen_state_internal",
+                "match:workspace", "match:content", "match:xdg_tag",
+            }
+            layer_props = {"match:namespace"}
+
+            # value = minimum number of required args for the effect
+            window_effects_min_args = {
+                "float": 1, "tile": 1, "fullscreen": 1, "maximize": 1,
+                "fullscreen_state": 2, "move": 2, "size": 2, "center": 1,
+                "pseudo": 1, "monitor": 1, "workspace": 1, "no_initial_focus": 1,
+                "pin": 1, "group": 0, "suppress_event": 1, "content": 1,
+                "no_close_for": 1,
+
+                "persistent_size": 1, "no_max_size": 1, "stay_focused": 1,
+                "animation": 1, "border_color": 1, "idle_inhibit": 1,
+                "opacity": 1, "tag": 1, "max_size": 2, "min_size": 2,
+                "border_size": 1, "rounding": 1, "rounding_power": 1,
+                "allows_input": 1, "dim_around": 1, "decorate": 1,
+                "focus_on_activate": 1, "keep_aspect_ratio": 1,
+                "nearest_neighbor": 1, "no_anim": 1, "no_blur": 1,
+                "no_dim": 1, "no_focus": 1, "no_follow_mouse": 1,
+                "no_shadow": 1, "no_shortcuts_inhibit": 1, "no_screen_share": 1,
+                "no_vrr": 1, "opaque": 1, "force_rgbx": 1,
+                "sync_fullscreen": 1, "immediate": 1, "xray": 1,
+                "render_unfocused": 1, "scroll_mouse": 1, "scroll_touchpad": 1,
+                "scrolling_width": 1,
+            }
+
+            layer_effects_min_args = {
+                "no_anim": 1, "blur": 1, "blur_popups": 1, "ignore_alpha": 1,
+                "dim_around": 1, "xray": 1, "animation": 1, "order": 1,
+                "above_lock": 1, "no_screen_share": 1,
+            }
+
+            def validate_rule_line(line):
+                l = line.strip()
+                m = re.match(r'^(windowrule|layerrule)\s*=\s*(.+)$', l)
+                if not m:
+                    return None
+
+                kind = m.group(1).lower()
+                rhs = m.group(2).strip()
+                parts = [p.strip() for p in rhs.split(',') if p.strip()]
+
+                if len(parts) < 2:
+                    return "rule must contain at least one prop and one effect, separated by commas"
+
+                if kind == "windowrule":
+                    allowed_props = window_props
+                    effects_min_args = window_effects_min_args
+                else:
+                    allowed_props = layer_props
+                    effects_min_args = layer_effects_min_args
+
+                seen_props = set()
+                prop_count = 0
+                effect_count = 0
+
+                for part in parts:
+                    tokens = part.split()
+                    if not tokens:
+                        continue
+                    key = tokens[0].lower()
+                    args = tokens[1:]
+
+                    if key.startswith("match:"):
+                        if key not in allowed_props:
+                            return f"unknown prop '{key}' for {kind}"
+                        if key in seen_props:
+                            return f"duplicate prop '{key}' is not allowed"
+                        if len(args) < 1:
+                            return f"prop '{key}' is missing its argument"
+                        seen_props.add(key)
+                        prop_count += 1
+                    else:
+                        if key not in effects_min_args:
+                            return f"unknown effect '{key}' for {kind}"
+                        if len(args) < effects_min_args[key]:
+                            need = effects_min_args[key]
+                            return f"effect '{key}' requires at least {need} argument(s)"
+                        effect_count += 1
+
+                if prop_count < 1:
+                    return "rule must include at least one match:* prop"
+                if effect_count < 1:
+                    return "rule must include at least one effect"
+
+                return None
+
+            for line in content.splitlines():
+                err = validate_rule_line(line)
+                if err:
+                    errors.append(f"Invalid rule syntax in '{line.strip()}': {err}.")
+                    break
+
+            if name != "delete_lines":
+                has_rule_line = any(k in lowered for k in ("windowrule", "layerrule"))
+                if not has_rule_line:
+                    errors.append("For this request, writes must use `windowrule` or `layerrule` syntax.")
+
+                if re.search(r'^\s*(float|tile)\s*=\s*', content, flags=re.IGNORECASE | re.MULTILINE):
+                    errors.append("Invalid rule syntax: use `windowrule = ...` rather than `float =` / `tile =` assignments.")
 
         if errors:
             return "GUARDRAIL BLOCKED: " + " ".join(errors)
@@ -213,19 +398,23 @@ class HyprBrain:
 
     def call_local_tool(self, name, args, ctx=None, guard=None):
         args = self._normalize_args(name, args)
-        ui.tool_action(name, args)
 
         # guardrail check (hard-enforced, not just prompt instructions)
         if ctx and ctx.domain == RequestContext.DOMAIN_HYPRLAND and guard:
             block_msg = guard.check_write(name, args)
             if block_msg:
-                ui.tool_result_error("Guardrail: prerequisite tools not called yet.")
+                if ui.is_debug_mode():
+                    ui.tool_result_error(block_msg)
+                else:
+                    ui.tool_result_error("Guardrail blocked this action.")
                 return block_msg
 
+        ui.tool_action(name, args)
+
         # path validation for file writes
-        if name in ("write_file", "append_file", "replace_line", "insert_line", "delete_lines"):
+        if name in ("write_file", "append_file", "replace_line", "insert_line", "delete_lines", "upsert_hypr_rule"):
             target_path = tools.expand_path(args.get('file_path', ''))
-            if name in ("append_file", "replace_line", "insert_line", "delete_lines"):
+            if name in ("append_file", "replace_line", "insert_line", "delete_lines", "upsert_hypr_rule"):
                 if not os.path.exists(target_path):
                     ui.tool_result_error(f"Path does not exist: {target_path}")
                     import glob
@@ -266,13 +455,15 @@ class HyprBrain:
                 args["run"] = False
 
         # anything destructive gets a confirmation prompt
-        if name in ("write_file", "append_file", "replace_line", "insert_line", "delete_lines", "execute_command"):
+        if name in ("write_file", "append_file", "replace_line", "insert_line", "delete_lines", "upsert_hypr_rule", "execute_command"):
             choice = ui.confirm_action(name, args)
             if choice == 'a':
                 ui.tool_result_aborted()
                 return "ABORT_QUERY"
             elif choice != 'y':
                 ui.tool_result_denied("Skipped by user.")
+                if guard and name in ("write_file", "append_file", "replace_line", "insert_line", "delete_lines", "upsert_hypr_rule"):
+                    guard.user_denied_write = True
                 return "User denied execution."
 
         # actually run the thing
@@ -377,6 +568,23 @@ class HyprBrain:
         ui.reset_steps()
 
         ctx = route_query(query, self._override_mode, self._override_domain)
+        
+        # Continuity inheritance: if the user gives a short answer to a question
+        if len(query.split()) <= 12 and self.history:
+            last_entry = self.history[-1]
+            if last_entry["role"] == "assistant" and "?" in last_entry["content"]:
+                ctx.mode = last_entry.get("_mode", ctx.mode)
+                ctx.domain = last_entry.get("_domain", ctx.domain)
+                ctx.use_tools = (ctx.mode == RequestContext.MODE_AGENT)
+                ctx.use_rag = (ctx.domain == RequestContext.DOMAIN_HYPRLAND)
+                # re-apply the correct system prompt for the inherited context
+                if ctx.domain == RequestContext.DOMAIN_HYPRLAND:
+                    ctx.system_prompt = HYPRLAND_AGENT_PROMPT if ctx.use_tools else HYPRLAND_ANSWER_PROMPT
+                elif ctx.domain == RequestContext.DOMAIN_GENERAL:
+                    ctx.system_prompt = GENERAL_ANSWER_PROMPT
+                else:
+                    ctx.system_prompt = CODING_AGENT_PROMPT if ctx.use_tools else CODING_ANSWER_PROMPT
+                
         ui.show_mode(ctx.mode, ctx.domain)
 
         # fresh guardrail tracker per query
@@ -399,18 +607,9 @@ class HyprBrain:
             )
         messages = [{"role": "system", "content": system_prompt}]
 
-        # filter history by mode so agent tool-call chatter doesn't leak into Q&A
-        filtered_history = []
-        for entry in self.history:
-            entry_mode = entry.get("_mode", "answer")
-            if ctx.mode == RequestContext.MODE_ANSWER:  # only Q&A history for Q&A mode
-
-                if entry_mode == RequestContext.MODE_ANSWER:
-                    filtered_history.append(entry)
-            else:  # agent mode gets everything for continuity
-                filtered_history.append(entry)
+        # include history for continuity. answer gets less history to stay focused, agent gets more.
         history_limit = 6 if ctx.mode == RequestContext.MODE_ANSWER else 10
-        for entry in filtered_history[-history_limit:]:
+        for entry in self.history[-history_limit:]:
             messages.append({"role": entry["role"], "content": entry["content"]})
 
         # RAG injection for hyprland queries
@@ -421,7 +620,20 @@ class HyprBrain:
                 context_str = ""
                 for i, chunk in enumerate(context_chunks):
                     source_info = f"Source: {chunk['source']}"
-                    context_str += f"\n--- Reference {i+1} ({source_info}) ---\n{chunk['content']}\n"
+                    # Rewrite deprecated syntax in RAG chunks to the current Hyprland format
+                    clean_content = chunk['content'].replace("windowrulev2", "windowrule")
+                    # old: `float,class:` → new: `float on, match:class`
+                    # Step 1: fix comma-class separator to use match:class
+                    clean_content = re.sub(r',\s*class:', ', match:class ', clean_content)
+                    # Step 2: only add `on` for known boolean effects — never touch opacity, rounding, etc.
+                    _bool_effects = r'(?:float|tile|center|pin|pseudo|fullscreen|maximize|no_blur|no_dim|no_shadow|no_focus|no_anim|opaque|stay_focused)'
+                    clean_content = re.sub(
+                        rf'(windowrule\s*=\s*)({_bool_effects})(\s*,)',
+                        lambda m: f"{m.group(1)}{m.group(2)} on{m.group(3)}",
+                        clean_content,
+                        flags=re.IGNORECASE
+                    )
+                    context_str += f"\n--- Reference {i+1} ({source_info}) ---\n{clean_content}\n"
                 query = f"[SYSTEM: Here is relevant Hyprland context. Use it if applicable.]\n{context_str}\n\n[USER QUERY]: {query}"
 
         # when the user says something short like "run it", give the model
@@ -438,24 +650,51 @@ class HyprBrain:
                         paths_str = ", ".join(path_matches[:3])
                         query += f"\n\n[CONTEXT from previous task: files involved: {paths_str}]"
 
-        # extra reminders for hyprland config edits (the 3b model needs nudging)
+        force_stop_tools = False
         is_hypr_mutation = ctx.domain == RequestContext.DOMAIN_HYPRLAND and ctx.mode == RequestContext.MODE_AGENT
         if is_hypr_mutation:
+            
+            generic_apps = [
+                "browser", "code editor", "editor", "music player", "video player",
+                "file manager", "launcher", "chat app", "mail app", "app", "application",
+            ]
+            q_user = user_query.lower()
+            has_generic_app = any(re.search(rf'\b{re.escape(g)}\b', q_user) for g in generic_apps)
 
-            q_lower = user_query.lower()
-            needs_rule_guard = any(kw in q_lower for kw in HYPRLAND_RULE_KEYWORDS)
-            if needs_rule_guard:
-                query += "\n\n[CRITICAL REMINDER]: 1. MUST use get_window_class tool first. 2. MUST use get_active_config_paths tool first to find rules file. 3. MUST read_file the rules file before modifying. 4. Use single-line syntax: windowrule = match:class ^(exact_class)$, tile on."
+            if has_generic_app:
+                query += "\n\n[CRITICAL STOP]: The user stated a generic app type. You MUST ask them WHICH specific app they are using via plain text. You have NO tools available for this turn. Do NOT make up an app name!"
+                force_stop_tools = True
+            else:
+                q_lower = user_query.lower()
+                
+                # If we're following up on a short answer, inherit the intent from the original query
+                if len(user_query.split()) <= 12 and len(self.history) >= 2:
+                    last_asst = self.history[-1]
+                    last_user = self.history[-2]
+                    if last_asst["role"] == "assistant" and "?" in last_asst["content"] and last_user["role"] == "user":
+                        q_lower += " " + last_user["content"].lower()
+
+                needs_rule_guard = any(kw in q_lower for kw in HYPRLAND_RULE_KEYWORDS)
+                
+                # Catch natural language overrides that also imply window rule changes
+                if any(kw in q_lower for kw in ["tile", "float", "center", "move", "resize", "pin", "blur", "opacity"]):
+                    needs_rule_guard = True
+                    
+                if needs_rule_guard:
+                    if guard:
+                        guard.require_rule_syntax = True
+                    reminder = "\n\n[CRITICAL REMINDER]: 1. MUST use get_window_class tool first. 2. MUST use get_active_config_paths tool first to find rules file. 3. MUST read_file the rules file before modifying. 4. Use new syntax: `windowrule = <effect> <value>, match:class ^(exact_class)$`. Replace <effect> and <value> with the requested action."
+                    query += reminder
         elif ctx.mode == RequestContext.MODE_AGENT:
             query += "\n\n[REMINDER]: Use tools to complete the task. Write plain text for conversational answers. DO NOT output empty {} blocks."
 
         messages.append({"role": "user", "content": query})
 
         # pick the right toolset
-        if not ctx.use_tools:
+        if not ctx.use_tools or force_stop_tools:
             active_tools = None
         elif ctx.domain == RequestContext.DOMAIN_HYPRLAND:
-            active_tools = TOOLS
+            active_tools = HYPRLAND_TOOLS
         else:
             active_tools = CODING_TOOLS
 
@@ -477,8 +716,8 @@ class HyprBrain:
                 content = result.get("message", {}).get("content", "")
                 if content:
                     yield content
-                self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode})
-                self.history.append({"role": "assistant", "content": content, "_mode": ctx.mode})
+                self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode, "_domain": ctx.domain})
+                self.history.append({"role": "assistant", "content": content, "_mode": ctx.mode, "_domain": ctx.domain})
             except Exception as e:
                 spinner.stop()
                 yield f"\nSystem Error: {e}"
@@ -487,6 +726,8 @@ class HyprBrain:
         # agent mode: tool-call loop
         max_iterations = 10
         _prev_tool_key = None  # for duplicate detection
+        _same_tool_streak = 0  # counts consecutive repeats of the exact same tool+args
+        _no_tool_streak = 0    # counts assistant text-only turns when a mutation is still required
         for iteration in range(max_iterations):
             payload = {
                 "model": LLM_MODEL,
@@ -514,17 +755,64 @@ class HyprBrain:
                     tool_calls.extend(text_tool_calls)
                     content = ""
 
-                if content:
-                    yield content
-
                 message["content"] = content if content else None
                 message["tool_calls"] = tool_calls if tool_calls else None
                 messages.append(message)
 
                 if not tool_calls:
-                    self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode})
-                    self.history.append({"role": "assistant", "content": content, "_mode": ctx.mode})
+                    if (
+                        is_hypr_mutation
+                        and guard
+                        and guard.require_rule_syntax
+                        and not guard.write_applied
+                        and not guard.user_denied_write
+                    ):
+                        _no_tool_streak += 1
+                        if _no_tool_streak >= 3:
+                            final_msg = (
+                                "I could not complete the mutation because the model kept responding without issuing the required tool call. "
+                                "Please retry the same command once; the safety state has been reset."
+                            )
+                            yield final_msg
+                            self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode, "_domain": ctx.domain})
+                            self.history.append({"role": "assistant", "content": final_msg, "_mode": ctx.mode, "_domain": ctx.domain})
+                            break
+
+                        missing_steps = []
+                        if not guard.got_config_paths:
+                            missing_steps.append("get_active_config_paths")
+                        if not guard.read_rules_file:
+                            missing_steps.append("read_file on discovered RULES FILE")
+                        if not guard.got_window_class:
+                            missing_steps.append("get_window_class")
+
+                        if missing_steps:
+                            instruction = (
+                                "[INCOMPLETE TASK] Do not answer in prose. Return exactly one tool call for the next missing prerequisite: "
+                                + ", then ".join(missing_steps)
+                                + "."
+                            )
+                        else:
+                            instruction = (
+                                "[INCOMPLETE TASK] Do not answer in prose. Return exactly one tool call to `upsert_hypr_rule` "
+                                "for the discovered rules file and resolved class, then continue."
+                            )
+
+                        messages.append({
+                            "role": "user",
+                            "content": instruction
+                        })
+                        continue
+
+                    _no_tool_streak = 0
+                    if content:
+                        yield content
+
+                    self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode, "_domain": ctx.domain})
+                    self.history.append({"role": "assistant", "content": content, "_mode": ctx.mode, "_domain": ctx.domain})
                     break
+
+                _no_tool_streak = 0
                 
                 abort_all = False
                 loop_break = False
@@ -536,10 +824,16 @@ class HyprBrain:
                     # catch the model if it's stuck in a loop
                     tool_key = (func_name, json.dumps(func_args, sort_keys=True))
                     if tool_key == _prev_tool_key:
-                        ui.tool_result_error("Duplicate tool call detected — stopping loop.")
-                        yield "\nDone. (Stopped because the same action was about to repeat.)"
-                        loop_break = True
-                        break
+                        _same_tool_streak += 1
+                        # allow one immediate retry (useful during guardrail recovery),
+                        # but stop if the same call keeps repeating with no progress.
+                        if _same_tool_streak >= 2:
+                            ui.tool_result_error("Duplicate tool call loop detected — stopping loop.")
+                            yield "\nStopped. (Same action repeated multiple times without progress.)"
+                            loop_break = True
+                            break
+                    else:
+                        _same_tool_streak = 0
                     _prev_tool_key = tool_key
 
                     tool_result = self.call_local_tool(func_name, func_args, ctx=ctx, guard=guard)
@@ -553,12 +847,35 @@ class HyprBrain:
                         "content": str(tool_result),
                         "tool_call_id": call_id
                     })
+
+                    # Help the model recover deterministically after guardrail blocks.
+                    if ctx.domain == RequestContext.DOMAIN_HYPRLAND and isinstance(tool_result, str) and tool_result.startswith("GUARDRAIL BLOCKED:"):
+                        if "Invalid rule syntax" in tool_result:
+                            recovery_steps = [
+                                "The last rule line syntax was invalid.",
+                                "Regenerate a valid anonymous rule using wiki order: windowrule = <effect> <arg>, match:<prop> <value>.",
+                                "Ensure every effect has required args (e.g. float on, move x y, max_size w h).",
+                                "Then retry the write in the discovered rules file only.",
+                                "Do not apologize. Continue with the next required tool call.",
+                            ]
+                        else:
+                            recovery_steps = [
+                                "If not done yet: call get_active_config_paths.",
+                                "Then read_file on the discovered >>> RULES FILE path.",
+                                "If windowrule is being added/changed and class is unknown: call get_window_class.",
+                                "Then retry the config edit in the rules file only.",
+                                "Do not apologize. Continue with the next required tool call.",
+                            ]
+                        messages.append({
+                            "role": "user",
+                            "content": "[GUARDRAIL RECOVERY] " + " ".join(recovery_steps)
+                        })
                     
                     break  # one tool at a time, always
                     
                 if abort_all or loop_break:
-                    self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode})
-                    self.history.append({"role": "assistant", "content": content or "Task completed.", "_mode": ctx.mode})
+                    self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode, "_domain": ctx.domain})
+                    self.history.append({"role": "assistant", "content": content or "Task completed.", "_mode": ctx.mode, "_domain": ctx.domain})
                     break
 
             except Exception as e:
@@ -568,8 +885,8 @@ class HyprBrain:
                 messages.append({"role": "user", "content": error_msg})
                 continue
         else:  # hit the iteration ceiling
-            self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode})
-            self.history.append({"role": "assistant", "content": "Task completed (iteration limit reached).", "_mode": ctx.mode})
+            self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode, "_domain": ctx.domain})
+            self.history.append({"role": "assistant", "content": "Task completed (iteration limit reached).", "_mode": ctx.mode, "_domain": ctx.domain})
 
     def unload(self):
         try: requests.post(OLLAMA_URL, json={"model": LLM_MODEL, "keep_alive": 0}, timeout=2)

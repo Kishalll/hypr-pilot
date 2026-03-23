@@ -31,9 +31,22 @@ def handle_slash_command(query, brain):
         brain.set_override(domain=RequestContext.DOMAIN_CODING)
         ui.show_override_set("Coding domain (forced)")
         return True
+    elif cmd == "/general":
+        brain.set_override(domain=RequestContext.DOMAIN_GENERAL)
+        ui.show_override_set("General domain (forced)")
+        return True
     elif cmd == "/auto":
         brain.clear_overrides()
         ui.show_override_set("Auto-detection (default)")
+        return True
+    elif cmd.startswith("/debug"):
+        parts = cmd.split()
+        if len(parts) == 2 and parts[1] in ("on", "off"):
+            enabled = parts[1] == "on"
+            ui.set_debug_mode(enabled)
+            ui.show_override_set(f"Debug mode ({'ON' if enabled else 'OFF'})")
+        else:
+            ui.tool_result_error("Usage: /debug on|off")
         return True
 
     return False

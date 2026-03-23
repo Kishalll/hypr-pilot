@@ -64,15 +64,31 @@ class HyprVectorStore:
                 return []
         
         query_vector = self.model.encode([query]).astype('float32')
-        distances, indices = self.index.search(query_vector, k)
+        fetch_k = min(len(self.metadata), max(k * 6, k))
+        distances, indices = self.index.search(query_vector, fetch_k)
         
-        results = []
-        for idx in indices[0]:
+        scored = []
+        for pos, idx in enumerate(indices[0]):
             if idx < len(self.metadata):
-                results.append(self.metadata[idx])
+                item = dict(self.metadata[idx])
+                item["_distance"] = float(distances[0][pos])
+                scored.append(item)
         
-        # wiki first, community dotfiles after
-        results.sort(key=lambda x: x['priority'])
+        # Canonical priority: wiki first; then nearest by embedding distance.
+        scored.sort(key=lambda x: (x.get('priority', 9), x.get('_distance', 1e9)))
+
+        results = []
+        seen = set()
+        for item in scored:
+            key = (item.get('source', ''), item.get('content', ''))
+            if key in seen:
+                continue
+            seen.add(key)
+            item.pop("_distance", None)
+            results.append(item)
+            if len(results) >= k:
+                break
+
         return results
 
 if __name__ == "__main__":

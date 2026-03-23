@@ -156,6 +156,40 @@ _TOOL_GET_CONFIG_PATHS = {
     }
 }
 
+_TOOL_UPSERT_HYPR_RULE = {
+    "type": "function",
+    "function": {
+        "name": "upsert_hypr_rule",
+        "description": "Builds and validates a Hyprland anonymous windowrule/layerrule from structured fields, then appends it to the target rules file if it does not already exist.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute or home-expanded path to the target rules file (usually from get_active_config_paths)."
+                },
+                "rule_type": {
+                    "type": "string",
+                    "description": "Either 'windowrule' or 'layerrule'."
+                },
+                "effect": {
+                    "type": "string",
+                    "description": "Rule effect name, such as float, opacity, move, no_blur, blur, xray, etc."
+                },
+                "effect_args": {
+                    "type": "string",
+                    "description": "Space-separated effect arguments, e.g. 'on', '0.8', '100 100', '(monitor_w*0.5) (monitor_h*0.5)'."
+                },
+                "matches": {
+                    "type": "string",
+                    "description": "Comma-separated match segments, e.g. 'match:class ^(kitty)$' or 'match:class ^(kitty)$, match:workspace 2'."
+                }
+            },
+            "required": ["file_path", "rule_type", "effect", "effect_args", "matches"]
+        }
+    }
+}
+
 # coding-only tools
 
 _TOOL_MAKE_DIR = {
@@ -314,6 +348,7 @@ _SHARED_TOOLS = [
 HYPRLAND_TOOLS = _SHARED_TOOLS + [
     _TOOL_GET_WINDOW_CLASS,
     _TOOL_GET_CONFIG_PATHS,
+    _TOOL_UPSERT_HYPR_RULE,
 ]
 
 # coding gets the shared set + mkdir, file_exists, grep
@@ -327,6 +362,7 @@ CODING_TOOLS = _SHARED_TOOLS + [
 TOOLS = _SHARED_TOOLS + [
     _TOOL_GET_WINDOW_CLASS,
     _TOOL_GET_CONFIG_PATHS,
+    _TOOL_UPSERT_HYPR_RULE,
     _TOOL_MAKE_DIR,
     _TOOL_FILE_EXISTS,
     _TOOL_SEARCH_FILES,
