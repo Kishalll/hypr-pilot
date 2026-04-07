@@ -363,28 +363,37 @@ def build_hypr_rule_line(rule_type, effect, effect_args, matches):
     if effect not in effects_min_args:
         return None, f"unknown effect '{effect}' for {rule_type}"
 
-    arg_count = len(effect_args.split()) if effect_args else 0
-    min_required = effects_min_args[effect]
-    if arg_count < min_required:
-        return None, f"effect '{effect}' requires at least {min_required} argument(s)"
-
     arg_tokens = effect_args.split() if effect_args else []
 
     if rule_type == "windowrule" and effect in _WINDOW_BOOL_EFFECTS:
-        if len(arg_tokens) != 1:
-            return None, f"effect '{effect}' requires exactly one boolean value (on/off)"
-        normalized = _normalize_on_off(arg_tokens[0])
-        if normalized is None:
-            return None, f"effect '{effect}' expects a boolean value (on/off)"
-        effect_args = normalized
+        # Auto-default to "on" if effect_args is empty
+        if not effect_args or not effect_args.strip():
+            effect_args = "on"
+        else:
+            if len(arg_tokens) != 1:
+                return None, f"effect '{effect}' requires exactly one boolean value (on/off)"
+            normalized = _normalize_on_off(arg_tokens[0])
+            if normalized is None:
+                return None, f"effect '{effect}' expects a boolean value (on/off)"
+            effect_args = normalized
 
     if rule_type == "layerrule" and effect in _LAYER_BOOL_EFFECTS:
-        if len(arg_tokens) != 1:
-            return None, f"effect '{effect}' requires exactly one boolean value (on/off)"
-        normalized = _normalize_on_off(arg_tokens[0])
-        if normalized is None:
-            return None, f"effect '{effect}' expects a boolean value (on/off)"
-        effect_args = normalized
+        # Auto-default to "on" if effect_args is empty
+        if not effect_args or not effect_args.strip():
+            effect_args = "on"
+        else:
+            if len(arg_tokens) != 1:
+                return None, f"effect '{effect}' requires exactly one boolean value (on/off)"
+            normalized = _normalize_on_off(arg_tokens[0])
+            if normalized is None:
+                return None, f"effect '{effect}' expects a boolean value (on/off)"
+            effect_args = normalized
+
+    arg_tokens = effect_args.split() if effect_args else []
+    arg_count = len(arg_tokens)
+    min_required = effects_min_args[effect]
+    if arg_count < min_required:
+        return None, f"effect '{effect}' requires at least {min_required} argument(s)"
 
     if rule_type == "layerrule" and effect == "xray":
         if len(arg_tokens) != 1:

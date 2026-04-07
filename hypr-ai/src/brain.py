@@ -718,6 +718,9 @@ class HyprBrain:
                     yield content
                 self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode, "_domain": ctx.domain})
                 self.history.append({"role": "assistant", "content": content, "_mode": ctx.mode, "_domain": ctx.domain})
+            except KeyboardInterrupt:
+                spinner.stop()
+                yield "\nRequest cancelled by user."
             except Exception as e:
                 spinner.stop()
                 yield f"\nSystem Error: {e}"
@@ -877,6 +880,13 @@ class HyprBrain:
                     self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode, "_domain": ctx.domain})
                     self.history.append({"role": "assistant", "content": content or "Task completed.", "_mode": ctx.mode, "_domain": ctx.domain})
                     break
+
+            except KeyboardInterrupt:
+                spinner.stop()
+                yield "\nRequest cancelled by user."
+                self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode, "_domain": ctx.domain})
+                self.history.append({"role": "assistant", "content": "Request cancelled by user.", "_mode": ctx.mode, "_domain": ctx.domain})
+                break
 
             except Exception as e:
                 spinner.stop()

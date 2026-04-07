@@ -82,6 +82,10 @@ def main():
     while True:
         try:
             query = ui.prompt()
+        except KeyboardInterrupt:
+            # Cancel the current prompt entry and return to a clean prompt.
+            print()
+            continue
         except EOFError:
             if brain: brain.unload()
             try:
@@ -107,14 +111,20 @@ def main():
                 continue
 
         response_started = False
-        
-        for token in brain.generate_response(query):
-            # show header only before the first real text token
-            if token.strip() and not response_started:
-                ui.response_start()
-                response_started = True
+
+        try:
+            for token in brain.generate_response(query):
+                # show header only before the first real text token
+                if token.strip() and not response_started:
+                    ui.response_start()
+                    response_started = True
+                if response_started:
+                    ui.response_token(token)
+        except KeyboardInterrupt:
             if response_started:
-                ui.response_token(token)
+                ui.response_end()
+            ui.tool_result_error("Request cancelled by user.")
+            continue
 
         if response_started:
             ui.response_end()

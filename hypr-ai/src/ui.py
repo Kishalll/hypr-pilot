@@ -1,9 +1,9 @@
-"""terminal UI for hypr-pilot — spinners, tool displays, confirmations, all the pretty stuff."""
-
 import sys
 import time
 import threading
 import shutil
+
+import tools
 
 
 
@@ -253,7 +253,9 @@ def confirm_action(name, args):
         effect = str(args.get("effect", "")).strip()
         effect_args = str(args.get("effect_args", "")).strip()
         matches = str(args.get("matches", "")).strip()
-        line = f"{rule_type} = {effect} {effect_args}, {matches}".replace("  ", " ").strip()
+        line, err = tools.build_hypr_rule_line(rule_type, effect, effect_args, matches)
+        if err:
+            line = f"{rule_type} = {effect} {effect_args}, {matches}".replace("  ", " ").strip()
         print(f"\n  {C.YELLOW}{C.BOLD}  ⚠  Upsert rule in: {path}{C.RESET}")
         print(f"  {C.BRIGHT_BLACK}  ┌{'─' * (w - 6)}┐{C.RESET}")
         print(f"  {C.BRIGHT_BLACK}  │{C.RESET} {C.GREEN}{line[:w - 8]}{C.RESET}")
