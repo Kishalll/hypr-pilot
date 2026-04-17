@@ -413,8 +413,22 @@ def build_hypr_rule_line(rule_type, effect, effect_args, matches):
     return line, None
 
 
+def _extract_match_class(line):
+    """Extract the class regex from a windowrule line for conflict detection."""
+    m = re.match(r'^windowrule\s*=\s*.+?,\s*match:class\s+(.+)$', line, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    return None
+
+def _extract_effect(line):
+    """Extract the effect (e.g., 'float', 'tile') from a windowrule line."""
+    m = re.match(r'^windowrule\s*=\s*(\w+)(?:\s+\S+)?\s*,', line, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().lower()
+    return None
+
 def upsert_hypr_rule(file_path, rule_type, effect, effect_args, matches):
-    """Build a validated Hyprland rule line and append if not already present."""
+    """Build a validated Hyprland rule line and upsert (replace conflicting rules if needed)."""
     try:
         expanded_path = expand_path(file_path)
         if not os.path.exists(expanded_path):
@@ -427,15 +441,46 @@ def upsert_hypr_rule(file_path, rule_type, effect, effect_args, matches):
         with open(expanded_path, 'r', encoding='utf-8') as f:
             existing_lines = [l.rstrip('\n') for l in f.readlines()]
 
+        # Check if exact same line exists
         if any(l.strip() == line.strip() for l in existing_lines):
             return f"Rule already exists in {file_path}: {line}"
 
-        with open(expanded_path, 'a', encoding='utf-8') as f:
-            if os.path.getsize(expanded_path) > 0:
-                f.write("\n")
-            f.write(line)
+        # For windowrule, check for conflicting rules (same class, different effect)
+        new_class = _extract_match_class(line) if rule_type == "windowrule" else None
+        new_effect = _extract_effect(line) if rule_type == "windowrule" else None
 
-        return f"Successfully upserted rule in {file_path}: {line}"
+        lines_to_write = []
+        removed_conflicts = []
+
+        if new_class and rule_type == "windowrule":
+            for l in existing_lines:
+                l_stripped = l.strip()
+                if not l_stripped or l_stripped.startswith('#'):
+                    lines_to_write.append(l)
+                    continue
+                existing_class = _extract_match_class(l_stripped)
+                existing_effect = _extract_effect(l_stripped)
+
+                # If same class but different effect, remove the old rule (we're replacing it)
+                if existing_class and existing_class == new_class and existing_effect and existing_effect != new_effect:
+                    removed_conflicts.append(l_stripped)
+                    continue
+                lines_to_write.append(l)
+        else:
+            lines_to_write = existing_lines
+
+        with open(expanded_path, 'w', encoding='utf-8') as f:
+            for l in lines_to_write:
+                f.write(l + '\n')
+            # Add newline if file had content and we're appending
+            if lines_to_write and lines_to_write[-1].strip():
+                pass  # already have newline from loop
+            f.write(line + '\n')
+
+        result_msg = f"Successfully upserted rule in {file_path}: {line}"
+        if removed_conflicts:
+            result_msg += f"\nRemoved {len(removed_conflicts)} conflicting rule(s): " + "; ".join(removed_conflicts)
+        return result_msg
     except Exception as e:
         return f"Error upserting rule: {e}"
 

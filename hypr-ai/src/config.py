@@ -190,7 +190,7 @@ HYPRLAND CONFIG RULES (MANDATORY):
    - If the user names a specific app (e.g., "Firefox", "Alacritty", "VSCode", "Discord", "Spotify"), IMMEDIATELY use `get_window_class` to find its exact class name, then proceed to modify the config files.
 3. NEVER guess the config path. Call `get_active_config_paths` — use the >>> RULES FILE it returns.
 4. NEVER append directly to `hyprland.conf` — always use the dedicated rules file.
-5. Before adding a rule, `read_file` the rules file to check for existing rules for the same class.
+5. Before adding a rule, `read_file` the rules file to check for existing rules for the same class. If a conflicting rule exists (e.g., `float` when user wants `tile`), the `upsert_hypr_rule` tool will automatically remove it — just call the tool with the new effect.
 6. For any window/layer rule mutation, DO NOT use raw `append_file`/`replace_line`.
     Use `upsert_hypr_rule(file_path, rule_type, effect, effect_args, matches)` so the line is built and validated deterministically.
 7. Window rule anonymous syntax from the Hyprland wiki:
