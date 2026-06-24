@@ -2,6 +2,8 @@
 
 A local, offline-capable AI assistant that lives in your terminal. Built specifically for Hyprland users who want quick help with their configs, window rules, keybindings — but also handles general coding tasks like writing scripts, creating files, and running commands.
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
 It uses RAG (Retrieval-Augmented Generation) to pull relevant information from curated Hyprland documentation and community dotfiles before answering, so the responses are grounded in real config syntax instead of hallucinated nonsense.
 
 ## What It Does

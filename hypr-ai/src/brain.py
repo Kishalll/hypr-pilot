@@ -1,3 +1,17 @@
+# Copyright 2026 Kishal
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import json
 import requests
 import re
@@ -608,7 +622,7 @@ class HyprBrain:
         messages = [{"role": "system", "content": system_prompt}]
 
         # include history for continuity. answer gets less history to stay focused, agent gets more.
-        history_limit = 6 if ctx.mode == RequestContext.MODE_ANSWER else 10
+        history_limit = 4 if ctx.mode == RequestContext.MODE_ANSWER else 6
         for entry in self.history[-history_limit:]:
             messages.append({"role": entry["role"], "content": entry["content"]})
 
@@ -703,19 +717,23 @@ class HyprBrain:
             payload = {
                 "model": LLM_MODEL,
                 "messages": messages,
-                "stream": False,
-                "options": {"temperature": 0.1, "num_ctx": 4096}
+                "stream": True,
+                "options": {"temperature": 0.1, "num_ctx": 2048, "num_predict": 512}
             }
             spinner = ui.Spinner("Thinking")
             spinner.start()
             try:
-                response = requests.post(OLLAMA_URL, json=payload, timeout=120)
+                response = requests.post(OLLAMA_URL, json=payload, stream=True, timeout=120)
                 response.raise_for_status()
                 spinner.stop()
-                result = response.json()
-                content = result.get("message", {}).get("content", "")
-                if content:
-                    yield content
+                content = ""
+                for line in response.iter_lines():
+                    if line:
+                        chunk = json.loads(line)
+                        chunk_content = chunk.get("message", {}).get("content", "")
+                        if chunk_content:
+                            content += chunk_content
+                            yield chunk_content
                 self.history.append({"role": "user", "content": user_query, "_mode": ctx.mode, "_domain": ctx.domain})
                 self.history.append({"role": "assistant", "content": content, "_mode": ctx.mode, "_domain": ctx.domain})
             except KeyboardInterrupt:
@@ -736,7 +754,7 @@ class HyprBrain:
                 "model": LLM_MODEL,
                 "messages": messages,
                 "stream": False,
-                "options": {"temperature": 0.0, "num_ctx": 4096}
+                "options": {"temperature": 0.0, "num_ctx": 2048, "num_predict": 512}
             }
             if active_tools:
                 payload["tools"] = active_tools
